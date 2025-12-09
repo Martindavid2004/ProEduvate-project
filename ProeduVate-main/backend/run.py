@@ -29,7 +29,8 @@ app = create_app()
 # Enable CORS for all routes to prevent 200 OK OPTIONS but failed POST errors
 CORS(app) 
 
-app.secret_key = 'AIzaSyDK_V5WbHRElHthkrTUC_SnWJy4RzYvF7k'
+# Use environment variable for secret key, generate random one if not set
+app.secret_key = os.getenv('SECRET_KEY', os.urandom(24).hex())
 
 DEMO_CREDENTIALS = {
     'admin': 'password',

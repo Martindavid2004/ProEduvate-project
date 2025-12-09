@@ -1,0 +1,3062 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ProEduvate - Learning Management System</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .fade-in { animation: fadeIn 0.3s ease-in; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        .chat-message { animation: slideIn 0.3s ease-out; }
+        @keyframes slideIn { from { transform: translateY(10px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        
+        /* Chatbot Styles */
+        .chatbot-toggle { 
+            position: fixed; 
+            bottom: 20px; 
+            right: 20px; 
+            z-index: 1000;
+            transition: all 0.3s ease;
+        }
+        .chatbot-toggle:hover { transform: scale(1.1); }
+        .chatbot-window { 
+            position: fixed; 
+            bottom: 80px; 
+            right: 20px; 
+            width: 400px;
+            height: 600px;
+            z-index: 999;
+            transition: all 0.3s ease;
+        }
+        
+        /* Modal Styles */
+        .interview-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.6);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            z-index: 1050;
+        }
+        .interview-modal-content {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+            width: 100%;
+            max-width: 600px;
+            max-height: 90vh;
+            overflow-y: auto;
+            position: relative;
+        }
+        
+        /* Sidebar Toggle */
+        .sidebar {
+            transition: transform 0.3s ease-in-out;
+        }
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 30;
+        }
+        .mobile-menu-btn {
+            display: none;
+        }
+        
+        /* Mobile Responsive Styles */
+        @media (max-width: 768px) {
+            .sidebar {
+                position: fixed;
+                left: 0;
+                top: 0;
+                bottom: 0;
+                z-index: 40;
+                transform: translateX(-100%);
+                width: 280px !important;
+                max-width: 80vw;
+            }
+            .sidebar.active {
+                transform: translateX(0);
+            }
+            .sidebar-overlay.active {
+                display: block;
+            }
+            .mobile-menu-btn {
+                display: inline-flex;
+            }
+            .chatbot-window {
+                width: calc(100vw - 40px);
+                height: 500px;
+                right: 20px;
+                left: 20px;
+            }
+            .interview-modal {
+                padding: 10px;
+            }
+            .interview-modal-content {
+                max-width: 100%;
+                margin: 0;
+                max-height: 95vh;
+            }
+            .page-content {
+                padding: 0.5rem !important;
+            }
+            .page-content > div {
+                border-radius: 0.5rem !important;
+            }
+        }
+        
+        @media (max-width: 640px) {
+            .chatbot-toggle {
+                bottom: 10px;
+                right: 10px;
+            }
+            .chatbot-toggle button {
+                width: 3.5rem !important;
+                height: 3.5rem !important;
+                font-size: 1.25rem !important;
+            }
+        }
+        
+        /* Scrollable Tables on Mobile */
+        @media (max-width: 768px) {
+            .table-container {
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+            }
+            table {
+                min-width: 600px;
+            }
+        }
+        
+        /* Dark Mode Styles */
+        .dark body {
+            background: linear-gradient(to bottom right, #1a202c, #2d3748);
+        }
+        .dark nav {
+            background-color: #374151 !important;
+            border-color: #4299e1;
+        }
+        .dark .bg-white {
+            background-color: #2d3748 !important;
+        }
+        .dark .bg-gray-100 {
+            background-color: #1f2937 !important;
+        }
+        .dark .bg-gray-50 {
+            background-color: #1a202c !important;
+        }
+        .dark .bg-slate-50,
+        .dark .from-slate-50,
+        .dark .to-slate-100,
+        .dark .from-gray-50 {
+            background-color: #1a202c !important;
+        }
+        .dark .text-gray-800 {
+            color: #e2e8f0 !important;
+        }
+        .dark .text-gray-700 {
+            color: #cbd5e0 !important;
+        }
+        .dark .text-gray-600 {
+            color: #a0aec0 !important;
+        }
+        .dark .text-gray-500 {
+            color: #718096 !important;
+        }
+        .dark .border-gray-200 {
+            border-color: #4a5568 !important;
+        }
+        .dark .hover\:bg-gray-100:hover {
+            background-color: #374151 !important;
+        }
+        .dark input,
+        .dark textarea,
+        .dark select {
+            background-color: #374151 !important;
+            border-color: #4a5568 !important;
+            color: #e2e8f0 !important;
+        }
+        .dark .chatbot-window {
+            background-color: #2d3748;
+        }
+    </style>
+</head>
+<body class="bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 min-h-screen">
+    <nav class="bg-gray-300 shadow-lg border-b-4 border-blue-500">
+        <div class="max-w-7xl mx-auto px-2 sm:px-4">
+            <div class="flex justify-between items-center py-3 sm:py-4">
+                <div class="flex items-center space-x-2 sm:space-x-3">
+                    <button onclick="toggleMobileSidebar()" class="mobile-menu-btn p-2 rounded-lg hover:bg-gray-100 text-gray-700">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
+                        </svg>
+                    </button>
+                    <img src="/static/WhatsApp_Image_2025-12-02_at_14.51.15__1_-removebg-preview.png" alt="ProEduvate Logo" class="h-14 sm:h-16 md:h-20 w-auto">
+                </div>
+                <div class="flex items-center space-x-1 sm:space-x-2">
+                    <button id="themeToggle" onclick="toggleTheme()" class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors" title="Toggle theme">
+                        <svg id="sunIcon" class="w-5 h-5 sm:w-6 sm:h-6 text-gray-700 dark:text-gray-300 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"></path>
+                        </svg>
+                        <svg id="moonIcon" class="w-5 h-5 sm:w-6 sm:h-6 text-gray-700 dark:text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path>
+                        </svg>
+                    </button>
+                    <a href="/logout" class="nav-btn px-2 py-1 sm:px-4 sm:py-2 text-xs sm:text-sm rounded-lg font-medium transition-all duration-200 bg-red-500 text-white hover:bg-red-600">Logout</a>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Sidebar Overlay for Mobile -->
+    <div id="sidebar-overlay" class="sidebar-overlay" onclick="toggleMobileSidebar()"></div>
+
+
+    <div id="admin-page" class="page-content max-w-7xl mx-auto p-2 sm:p-4 hidden h-[calc(100vh-80px)]">
+        <div class="bg-gray-100 shadow-lg border-b-4 border-blue-500 rounded-lg sm:rounded-xl overflow-hidden flex h-full">
+            
+            <!-- Sidebar -->
+            <aside id="admin-sidebar" class="sidebar w-64 bg-gray-50 border-r border-gray-200 flex flex-col">
+                <div class="p-6 border-b border-gray-200 bg-white">
+                    <h2 class="text-xl font-bold text-gray-800 flex items-center">
+                        <span class="mr-2">👨‍💼</span> Admin Panel
+                    </h2>
+                </div>
+                <nav class="flex-1 p-4 space-y-2">
+                    <button onclick="switchAdminTab('users')" id="btn-admin-users" class="admin-nav-btn w-full text-left px-4 py-3 rounded-lg font-medium transition-all duration-200 bg-blue-500 text-white shadow-md flex items-center">
+                        <span class="mr-3">👥</span> User Management
+                    </button>
+                    <button onclick="switchAdminTab('assignments')" id="btn-admin-assignments" class="admin-nav-btn w-full text-left px-4 py-3 rounded-lg font-medium text-gray-600 hover:bg-gray-100 transition-all duration-200 flex items-center">
+                        <span class="mr-3">📝</span> Assignment Management
+                    </button>
+                    <button onclick="switchAdminTab('status')" id="btn-admin-status" class="admin-nav-btn w-full text-left px-4 py-3 rounded-lg font-medium text-gray-600 hover:bg-gray-100 transition-all duration-200 flex items-center">
+                        <span class="mr-3">📊</span> Status & Progress
+                    </button>
+                    <button onclick="switchAdminTab('tasks')" id="btn-admin-tasks" class="admin-nav-btn w-full text-left px-4 py-3 rounded-lg font-medium text-gray-600 hover:bg-gray-100 transition-all duration-200 flex items-center">
+                        <span class="mr-3">📋</span> Admin Created Tasks
+                    </button>
+                </nav>
+            </aside>
+
+            <!-- Main Content -->
+            <main class="flex-1 overflow-y-auto p-4 sm:p-6 md:p-8 bg-gradient-to-br from-gray-50 to-slate-100 relative">
+                
+                <!-- User Management Tab -->
+                <div id="admin-tab-users" class="admin-tab-content fade-in">
+                    <h3 class="text-2xl font-bold text-gray-800 mb-6">User Management</h3>
+                    <div class="space-y-6">
+                        <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                            <h4 class="text-xl font-semibold mb-4 text-blue-800">Add New User</h4>
+                            <div class="flex space-x-3">
+                                <input type="text" id="newUserName" placeholder="Full Name" class="flex-1 px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500">
+                                <select id="userRole" title="Select user role" class="px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500">
+                                    <option value="student">Student</option>
+                                    <option value="teacher">Teacher</option>
+                                </select>
+                                <button onclick="addUser()" class="px-6 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 font-semibold shadow-md hover:shadow-lg transition-all">
+                                    Add User
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                            <h4 class="text-xl font-semibold mb-4 text-gray-800">Current Users</h4>
+                            <div id="usersList" class="space-y-3"></div>
+                        </div>
+
+                        <div class="grid md:grid-cols-2 gap-4">
+                            <div class="bg-blue-100 p-6 rounded-lg text-center">
+                                <div class="text-3xl font-bold text-blue-600" id="totalStudents">0</div>
+                                <div class="text-sm text-blue-800 mt-1">Total Students</div>
+                            </div>
+                            <div class="bg-green-100 p-6 rounded-lg text-center">
+                                <div class="text-3xl font-bold text-green-600" id="totalTeachers">0</div>
+                                <div class="text-sm text-green-800 mt-1">Total Teachers</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Assignment Management Tab -->
+                <div id="admin-tab-assignments" class="admin-tab-content hidden fade-in">
+                    <h3 class="text-2xl font-bold text-gray-800 mb-6">Assignment Management</h3>
+                    <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                        <h4 class="text-xl font-semibold mb-4 text-green-800">Assign Work to Teacher</h4>
+                        <div class="space-y-4 max-w-2xl">
+                            <div>
+                                <label class="block text-sm font-medium mb-2 text-gray-700">Assignment Title</label>
+                                <input type="text" id="assignmentTitle" placeholder="e.g., Grade Java Assignments" class="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-green-500">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium mb-2 text-gray-700">Assign to Teacher</label>
+                                <select id="assignTeacher" title="Select a teacher to assign work" class="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-green-500">
+                                    <option value="">Select Teacher</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium mb-2 text-gray-700">Description</label>
+                                <textarea id="assignmentDesc" placeholder="Enter assignment description and requirements..." class="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-green-500 h-32 resize-none"></textarea>
+                            </div>
+                            <button onclick="assignWork()" class="w-full py-3 bg-green-500 text-white rounded-lg hover:bg-green-600 font-semibold shadow-md hover:shadow-lg transition-all">
+                                Assign Work
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="mt-6 grid md:grid-cols-2 gap-4">
+                        <div class="bg-purple-100 p-6 rounded-lg text-center">
+                            <div class="text-3xl font-bold text-purple-600" id="totalAssignments">0</div>
+                            <div class="text-sm text-purple-800 mt-1">Active Assignments</div>
+                        </div>
+                        <div class="bg-orange-100 p-6 rounded-lg text-center">
+                            <div class="text-3xl font-bold text-orange-600" id="totalInterviews">0</div>
+                            <div class="text-sm text-orange-800 mt-1">Completed Interviews</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Status & Progress Tab -->
+                <div id="admin-tab-status" class="admin-tab-content hidden fade-in">
+                    <h3 class="text-2xl font-bold text-gray-800 mb-6">Status & Progress Overview</h3>
+                    
+                    <div class="space-y-6">
+                        <!-- Student Progress Section -->
+                        <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                            <h4 class="text-xl font-semibold text-gray-800 mb-4 flex items-center">
+                                <span class="mr-2">🎓</span> Student Progress
+                            </h4>
+                            <div id="adminStudentProgress" class="space-y-3">
+                                <p class="text-gray-500 text-center py-8">Loading student progress...</p>
+                            </div>
+                        </div>
+
+                        <!-- Teacher Tasks Status Section -->
+                        <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                            <h4 class="text-xl font-semibold text-gray-800 mb-4 flex items-center">
+                                <span class="mr-2">👩‍🏫</span> Teacher Tasks Status
+                            </h4>
+                            <div id="adminTeacherTasks" class="space-y-3">
+                                <p class="text-gray-500 text-center py-8">Loading teacher tasks...</p>
+                            </div>
+                        </div>
+
+                        <!-- Overall Statistics -->
+                        <div class="grid md:grid-cols-3 gap-4">
+                            <div class="bg-blue-50 p-5 rounded-lg border border-blue-100">
+                                <div class="flex items-center justify-between mb-2">
+                                    <span class="text-sm text-blue-700 font-medium">Avg Student Completion</span>
+                                    <span class="text-2xl font-bold text-blue-600" id="avgStudentCompletion">0%</span>
+                                </div>
+                                <div class="w-full bg-blue-200 rounded-full h-2">
+                                    <div id="avgCompletionBar" class="bg-blue-600 h-2 rounded-full" style="width: 0%"></div>
+                                </div>
+                            </div>
+                            <div class="bg-green-50 p-5 rounded-lg border border-green-100">
+                                <div class="flex items-center justify-between mb-2">
+                                    <span class="text-sm text-green-700 font-medium">Teacher Tasks Completed</span>
+                                    <span class="text-2xl font-bold text-green-600" id="teacherTasksCompleted">0/0</span>
+                                </div>
+                                <div class="w-full bg-green-200 rounded-full h-2">
+                                    <div id="teacherTasksBar" class="bg-green-600 h-2 rounded-full" style="width: 0%"></div>
+                                </div>
+                            </div>
+                            <div class="bg-purple-50 p-5 rounded-lg border border-purple-100">
+                                <div class="flex items-center justify-between mb-2">
+                                    <span class="text-sm text-purple-700 font-medium">Overall Submissions</span>
+                                    <span class="text-2xl font-bold text-purple-600" id="totalSubmissions">0</span>
+                                </div>
+                                <div class="text-xs text-purple-600 mt-1">Across all assignments</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Admin Created Tasks Tab -->
+                <div id="admin-tab-tasks" class="admin-tab-content hidden fade-in">
+                    <h3 class="text-2xl font-bold text-gray-800 mb-6">📋 Admin Created Tasks for Teachers</h3>
+                    
+                    <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                        <div id="adminCreatedTasksList" class="space-y-4">
+                            <p class="text-gray-500 text-center py-8">Loading tasks...</p>
+                        </div>
+                    </div>
+                </div>
+
+            </main>
+        </div>
+    </div>
+
+
+    <div id="teacher-page" class="page-content max-w-7xl mx-auto p-2 sm:p-4 hidden h-[calc(100vh-80px)]">
+        <div class="bg-gray-100 shadow-lg border-b-4 border-blue-500 rounded-lg sm:rounded-xl overflow-hidden flex h-full">
+            
+            <aside id="teacher-sidebar" class="sidebar w-64 bg-gray-50 border-r border-gray-200 flex flex-col">
+                <div class="p-6 border-b border-gray-200 bg-white">
+                    <h2 class="text-xl font-bold text-gray-800 flex items-center">
+                        <span class="mr-2">👩‍🏫</span> Dashboard
+                    </h2>
+                </div>
+                <nav class="flex-1 p-4 space-y-2">
+                    <button onclick="switchTeacherTab('progress')" id="btn-t-progress" class="teacher-nav-btn w-full text-left px-4 py-3 rounded-lg font-medium transition-all duration-200 bg-blue-500 text-white shadow-md flex items-center">
+                        <span class="mr-3">📈</span> Student Progress
+                    </button>
+                    <button onclick="switchTeacherTab('create')" id="btn-t-create" class="teacher-nav-btn w-full text-left px-4 py-3 rounded-lg font-medium text-gray-600 hover:bg-gray-100 transition-all duration-200 flex items-center">
+                        <span class="mr-3">➕</span> Create Assignment
+                    </button>
+                    <button onclick="switchTeacherTab('my-assignments')" id="btn-t-my-assignments" class="teacher-nav-btn w-full text-left px-4 py-3 rounded-lg font-medium text-gray-600 hover:bg-gray-100 transition-all duration-200 flex items-center">
+                        <span class="mr-3">📂</span> My Assignment
+                    </button>
+                    <button onclick="switchTeacherTab('assignment')" id="btn-t-assignment" class="teacher-nav-btn w-full text-left px-4 py-3 rounded-lg font-medium text-gray-600 hover:bg-gray-100 transition-all duration-200 flex items-center">
+                        <span class="mr-3">🔔</span> Admin Tasks
+                    </button>
+                    <button onclick="switchTeacherTab('submissions')" id="btn-t-submissions" class="teacher-nav-btn w-full text-left px-4 py-3 rounded-lg font-medium text-gray-600 hover:bg-gray-100 transition-all duration-200 flex items-center">
+                        <span class="mr-3">📥</span> Student Submissions
+                    </button>
+                </nav>
+            </aside>
+
+            <main class="flex-1 overflow-y-auto p-8 bg-gradient-to-br from-gray-50 to-slate-100 relative">
+                
+                <div id="teacher-tab-progress" class="teacher-tab-content fade-in">
+                    <h3 class="text-2xl font-bold text-gray-800 mb-6">Student Progress Overview</h3>
+                    <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                        <div id="studentProgress" class="space-y-3">
+                            <p class="text-gray-500 text-center py-8">Loading student data...</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="teacher-tab-create" class="teacher-tab-content hidden fade-in">
+                    <h3 class="text-2xl font-bold text-gray-800 mb-6">Create New Assignment</h3>
+                    <div class="bg-white p-8 rounded-xl shadow-sm border border-gray-100 max-w-3xl">
+                        <div class="space-y-6">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">Assignment Title</label>
+                                <input type="text" id="teacherAssignmentTitle" placeholder="e.g., Java Basics Week 1" class="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 bg-gray-50 focus:bg-white transition-colors">
+                            </div>
+                            
+                            <div class="grid grid-cols-2 gap-6">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-2">Assignment Type</label>
+                                    <select id="assignmentType" class="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 bg-gray-50 focus:bg-white">
+                                        <option value="manual">Manual Assignment</option>
+                                        <option value="quiz">AI Quiz Generator</option>
+                                        <option value="presentation">Presentation</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label for="assignmentDueDate" class="block text-sm font-medium text-gray-700 mb-2">Due Date</label>
+                                    <input type="date" id="assignmentDueDate" class="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 bg-gray-50 focus:bg-white">
+                                </div>
+                            </div>
+
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">Description / Instructions</label>
+                                <textarea id="teacherAssignmentDesc" placeholder="Enter detailed instructions for the students..." class="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 h-32 bg-gray-50 focus:bg-white resize-none"></textarea>
+                            </div>
+
+                            <div class="pt-4">
+                                <button onclick="createAssignment()" class="w-full py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold shadow-md hover:shadow-lg transition-all flex items-center justify-center">
+                                    <span class="mr-2">🚀</span> Publish Assignment
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="teacher-tab-my-assignments" class="teacher-tab-content hidden fade-in">
+                    <h3 class="text-2xl font-bold text-gray-800 mb-6">My Created Assignments</h3>
+                    <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 min-h-[400px]">
+                        <div id="teacherAssignments" class="grid gap-4 grid-cols-1 lg:grid-cols-2">
+                            <p class="text-gray-500 text-center py-8">No assignments created yet.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="teacher-tab-assignment" class="teacher-tab-content hidden fade-in">
+                    <h3 class="text-2xl font-bold text-gray-800 mb-6 flex items-center">
+                        <span class="mr-3">📥</span> Tasks Assigned by Admin
+                    </h3>
+                    <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 min-h-[400px]">
+                        <div id="adminAssignedTasks" class="grid gap-4 grid-cols-1">
+                            <p class="text-gray-500 text-center py-8">Loading tasks...</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="teacher-tab-submissions" class="teacher-tab-content hidden fade-in">
+                    <h3 class="text-2xl font-bold text-gray-800 mb-6 flex items-center">
+                        <span class="mr-3">📤</span> Student Submissions & Progress
+                    </h3>
+                    
+                    <div class="space-y-6">
+                        <!-- Submission Statistics -->
+                        <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                            <h4 class="text-xl font-semibold text-gray-800 mb-4 flex items-center">
+                                <span class="mr-2">📊</span> Submission Overview
+                            </h4>
+                            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                                <div class="bg-blue-50 p-4 rounded-lg text-center border border-blue-100">
+                                    <div class="text-3xl font-bold text-blue-600" id="totalSubmissionsCount">0</div>
+                                    <div class="text-sm text-blue-800 mt-1">Total Submissions</div>
+                                </div>
+                                <div class="bg-green-50 p-4 rounded-lg text-center border border-green-100">
+                                    <div class="text-3xl font-bold text-green-600" id="uniqueStudentsCount">0</div>
+                                    <div class="text-sm text-green-800 mt-1">Students Submitted</div>
+                                </div>
+                                <div class="bg-purple-50 p-4 rounded-lg text-center border border-purple-100">
+                                    <div class="text-3xl font-bold text-purple-600" id="avgSubmissionRate">0%</div>
+                                    <div class="text-sm text-purple-800 mt-1">Avg Completion</div>
+                                </div>
+                                <div class="bg-orange-50 p-4 rounded-lg text-center border border-orange-100">
+                                    <div class="text-3xl font-bold text-orange-600" id="pendingSubmissionsCount">0</div>
+                                    <div class="text-sm text-orange-800 mt-1">Pending</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Filter and Search -->
+                        <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+                            <div class="flex flex-wrap gap-3 items-center">
+                                <div class="flex-1 min-w-[200px]">
+                                    <input type="text" id="searchSubmissions" placeholder="Search by student name or assignment..." class="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 text-sm">
+                                </div>
+                                <select id="filterByAssignment" class="px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 text-sm">
+                                    <option value="all">All Assignments</option>
+                                </select>
+                                <button onclick="filterSubmissions()" class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 text-sm">
+                                    🔍 Filter
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Submissions by Assignment -->
+                        <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                            <h4 class="text-xl font-semibold text-gray-800 mb-4 flex items-center">
+                                <span class="mr-2">📋</span> Submissions by Assignment
+                            </h4>
+                            <div id="submissionsByAssignment" class="space-y-4">
+                                <p class="text-gray-500 text-center py-8">Loading submissions...</p>
+                            </div>
+                        </div>
+
+                        <!-- Student Progress Table -->
+                        <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                            <h4 class="text-xl font-semibold text-gray-800 mb-4 flex items-center">
+                                <span class="mr-2">👥</span> Individual Student Progress
+                            </h4>
+                            <div class="overflow-x-auto">
+                                <table class="w-full" id="studentProgressTable">
+                                    <thead class="bg-gray-50 border-b-2 border-gray-200">
+                                        <tr>
+                                            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Student Name</th>
+                                            <th class="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider">Total Submitted</th>
+                                            <th class="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider">Completion Rate</th>
+                                            <th class="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider">Last Submission</th>
+                                            <th class="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="studentProgressTableBody" class="divide-y divide-gray-200">
+                                        <tr>
+                                            <td colspan="5" class="px-4 py-8 text-center text-gray-500">Loading student progress...</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </main>
+        </div>
+    </div>
+
+
+    <div id="student-page" class="page-content max-w-7xl mx-auto p-2 sm:p-4 hidden h-[calc(100vh-80px)]">
+        <div class="bg-gray-100 shadow-lg border-b-4 border-blue-500 rounded-lg sm:rounded-xl overflow-hidden flex h-full">
+            
+            <aside id="student-sidebar" class="sidebar w-64 bg-gray-50 border-r border-gray-200 flex flex-col">
+                <div class="p-6 border-b border-gray-200 bg-white">
+                    <h2 class="text-xl font-bold text-gray-800 flex items-center">
+                        <span class="mr-2">🎓</span> Dashboard
+                    </h2>
+                </div>
+                <nav class="flex-1 p-4 space-y-2">
+                    <button onclick="switchStudentTab('profile')" id="btn-profile" class="student-nav-btn w-full text-left px-4 py-3 rounded-lg font-medium transition-all duration-200 bg-blue-500 text-white shadow-md flex items-center">
+                        <span class="mr-3">👤</span> Profile
+                    </button>
+                    <button onclick="switchStudentTab('resume')" id="btn-resume" class="student-nav-btn w-full text-left px-4 py-3 rounded-lg font-medium text-gray-600 hover:bg-gray-100 transition-all duration-200 flex items-center">
+                        <span class="mr-3">📄</span> Resume Analysis
+                    </button>
+                    <button onclick="switchStudentTab('interview')" id="btn-interview" class="student-nav-btn w-full text-left px-4 py-3 rounded-lg font-medium text-gray-600 hover:bg-gray-100 transition-all duration-200 flex items-center">
+                        <span class="mr-3">🎤</span> Mock Interview
+                    </button>
+                    <button onclick="switchStudentTab('assignments')" id="btn-assignments" class="student-nav-btn w-full text-left px-4 py-3 rounded-lg font-medium text-gray-600 hover:bg-gray-100 transition-all duration-200 flex items-center">
+                        <span class="mr-3">📚</span> Assignments
+                    </button>
+                    <button onclick="switchStudentTab('progress')" id="btn-progress" class="student-nav-btn w-full text-left px-4 py-3 rounded-lg font-medium text-gray-600 hover:bg-gray-100 transition-all duration-200 flex items-center">
+                        <span class="mr-3">📊</span> Progress & Verification
+                    </button>
+                </nav>
+            </aside>
+
+            <main class="flex-1 overflow-y-auto p-8 bg-gradient-to-br from-gray-50 to-slate-100 relative">
+                
+                <div id="tab-profile" class="student-tab-content fade-in">
+                    <h3 class="text-2xl font-bold text-gray-800 mb-6">My Profile</h3>
+                    <div class="bg-white p-8 rounded-xl shadow-sm border border-gray-100 max-w-2xl">
+                        <div class="flex items-center space-x-6 mb-8">
+                            <div class="w-24 h-24 bg-gradient-to-br from-blue-400 to-indigo-600 rounded-full flex items-center justify-center text-4xl shadow-lg">
+                                👤
+                            </div>
+                            <div>
+                                <h4 class="text-2xl font-bold text-gray-900" id="studentName">Loading Name...</h4>
+                                <p class="text-gray-500 text-lg" id="studentId">Loading ID...</p>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div class="bg-blue-50 p-6 rounded-lg border border-blue-100">
+                                <p class="text-sm text-blue-600 font-semibold uppercase tracking-wider mb-1">Current ATS Score</p>
+                                <p class="text-3xl font-bold text-blue-700" id="atsScore">--</p>
+                            </div>
+                            <div class="bg-purple-50 p-6 rounded-lg border border-purple-100">
+                                <p class="text-sm text-purple-600 font-semibold uppercase tracking-wider mb-1">Status</p>
+                                <p class="text-xl font-bold text-purple-700">Active Student</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="tab-resume" class="student-tab-content hidden fade-in">
+                    <h3 class="text-2xl font-bold text-gray-800 mb-6">Resume Analysis</h3>
+                    <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 max-w-3xl">
+                        <div class="bg-green-50 rounded-lg p-6 mb-6 border border-green-100">
+                            <h4 class="text-lg font-semibold mb-4 text-green-800">Upload Your Resume</h4>
+                            <div class="space-y-4">
+                                <div>
+                                    <label for="resumeUpload" class="block text-sm font-medium mb-2 text-gray-700">Select PDF File</label>
+                                    <input type="file" id="resumeUpload" accept=".pdf" 
+                                        class="w-full text-sm text-gray-500 file:mr-4 file:py-2.5 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-green-500 file:text-white hover:file:bg-green-600 transition-all cursor-pointer border rounded-lg p-1">
+                                </div>
+                                <button onclick="analyzeResume()" class="w-full py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium transition duration-200 shadow-sm hover:shadow-md">
+                                    Analyze Resume with AI
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div id="resumeAnalysis" class="hidden">
+                            <h4 class="text-lg font-semibold mb-3 text-gray-800">Analysis Results</h4>
+                            <div class="bg-white border rounded-lg p-5 shadow-inner" id="atsResults">
+                                </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="tab-interview" class="student-tab-content hidden fade-in">
+                    <h3 class="text-2xl font-bold text-gray-800 mb-6">AI Mock Interview</h3>
+                    <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 max-w-3xl">
+                        <div class="bg-purple-50 rounded-lg p-8 mb-6">
+                            <div class="text-center mb-6">
+                                <span class="text-4xl mb-4 block">🤖</span>
+                                <h4 class="text-xl font-bold text-purple-900 mb-2">Ready to practice?</h4>
+                                <p class="text-purple-700 mb-4 max-w-lg mx-auto">Our AI will conduct a professional HR interview with you. Set your preferences below.</p>
+                            </div>
+
+                            <!-- Interview Duration Selection -->
+                            <div class="mb-6 max-w-md mx-auto">
+                                <label class="block text-sm font-semibold text-purple-900 mb-3 text-center">⏱️ Select Interview Duration:</label>
+                                <div class="grid grid-cols-4 gap-2">
+                                    <button onclick="selectDuration(15)" id="duration-15" class="duration-btn p-3 bg-white border-2 border-purple-200 rounded-lg hover:border-purple-500 transition-all text-center">
+                                        <div class="font-bold text-purple-700">15</div>
+                                        <div class="text-xs text-gray-600">min</div>
+                                    </button>
+                                    <button onclick="selectDuration(20)" id="duration-20" class="duration-btn p-3 bg-white border-2 border-purple-500 rounded-lg ring-2 ring-purple-300 transition-all text-center">
+                                        <div class="font-bold text-purple-700">20</div>
+                                        <div class="text-xs text-gray-600">min</div>
+                                    </button>
+                                    <button onclick="selectDuration(25)" id="duration-25" class="duration-btn p-3 bg-white border-2 border-purple-200 rounded-lg hover:border-purple-500 transition-all text-center">
+                                        <div class="font-bold text-purple-700">25</div>
+                                        <div class="text-xs text-gray-600">min</div>
+                                    </button>
+                                    <button onclick="selectDuration(30)" id="duration-30" class="duration-btn p-3 bg-white border-2 border-purple-200 rounded-lg hover:border-purple-500 transition-all text-center">
+                                        <div class="font-bold text-purple-700">30</div>
+                                        <div class="text-xs text-gray-600">min</div>
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            <!-- Interview Mode Selection -->
+                            <div>
+                                <label class="block text-sm font-semibold text-purple-900 mb-3 text-center">Choose Interview Mode:</label>
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-lg mx-auto">
+                                    <button onclick="startInterview('voice')" id="startVoiceInterviewBtn" class="group p-4 bg-white border-2 border-purple-200 rounded-xl hover:border-purple-500 hover:shadow-md transition-all flex flex-col items-center justify-center gap-2">
+                                        <span class="text-3xl group-hover:scale-110 transition-transform">🎙️</span>
+                                        <span class="font-semibold text-purple-700">Voice Interview</span>
+                                    </button>
+                                    <button onclick="startInterview('text')" id="startTextInterviewBtn" class="group p-4 bg-white border-2 border-indigo-200 rounded-xl hover:border-indigo-500 hover:shadow-md transition-all flex flex-col items-center justify-center gap-2">
+                                        <span class="text-3xl group-hover:scale-110 transition-transform">⌨️</span>
+                                        <span class="font-semibold text-indigo-700">Text Interview</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="tab-assignments" class="student-tab-content hidden fade-in">
+                    <h3 class="text-2xl font-bold text-gray-800 mb-6">My Assignments</h3>
+                    <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 min-h-[400px]">
+                        <div id="studentAssignments" class="space-y-4 grid gap-4 grid-cols-1 xl:grid-cols-2">
+                            </div>
+                    </div>
+                </div>
+
+                <div id="tab-progress" class="student-tab-content hidden fade-in">
+                    <h3 class="text-2xl font-bold text-gray-800 mb-6">Progress & Verification</h3>
+                    <div class="space-y-6">
+                        <!-- Overall Progress Summary -->
+                        <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                            <h4 class="text-xl font-semibold text-gray-800 mb-4 flex items-center">
+                                <span class="mr-2">📈</span> Overall Progress
+                            </h4>
+                            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div class="bg-blue-50 p-4 rounded-lg text-center border border-blue-100">
+                                    <div class="text-3xl font-bold text-blue-600" id="totalAssignmentsCount">0</div>
+                                    <div class="text-sm text-blue-800 mt-1">Total Assignments</div>
+                                </div>
+                                <div class="bg-green-50 p-4 rounded-lg text-center border border-green-100">
+                                    <div class="text-3xl font-bold text-green-600" id="submittedAssignmentsCount">0</div>
+                                    <div class="text-sm text-green-800 mt-1">Submitted</div>
+                                </div>
+                                <div class="bg-orange-50 p-4 rounded-lg text-center border border-orange-100">
+                                    <div class="text-3xl font-bold text-orange-600" id="pendingAssignmentsCount">0</div>
+                                    <div class="text-sm text-orange-800 mt-1">Pending</div>
+                                </div>
+                            </div>
+                            <div class="mt-4">
+                                <div class="flex justify-between text-sm mb-2">
+                                    <span class="text-gray-600">Completion Rate</span>
+                                    <span class="font-semibold text-gray-800" id="completionRate">0%</span>
+                                </div>
+                                <div class="w-full bg-gray-200 rounded-full h-3">
+                                    <div id="completionBar" class="bg-gradient-to-r from-blue-500 to-green-500 h-3 rounded-full transition-all duration-500" style="width: 0%"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Assignment Submission Status -->
+                        <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                            <h4 class="text-xl font-semibold text-gray-800 mb-4 flex items-center">
+                                <span class="mr-2">✅</span> Assignment Submission Status
+                            </h4>
+                            <div id="submissionStatusList" class="space-y-3">
+                                <p class="text-gray-500 text-center py-8">Loading submission status...</p>
+                            </div>
+                        </div>
+
+                        <!-- Performance Analytics -->
+                        <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                            <h4 class="text-xl font-semibold text-gray-800 mb-4 flex items-center">
+                                <span class="mr-2">🎯</span> Performance Analytics
+                            </h4>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div class="bg-purple-50 p-5 rounded-lg border border-purple-100">
+                                    <div class="flex items-center justify-between mb-2">
+                                        <span class="text-sm text-purple-700 font-medium">Resume ATS Score</span>
+                                        <span class="text-2xl font-bold text-purple-600" id="progressAtsScore">--</span>
+                                    </div>
+                                    <div class="w-full bg-purple-200 rounded-full h-2">
+                                        <div id="atsScoreBar" class="bg-purple-600 h-2 rounded-full" style="width: 0%"></div>
+                                    </div>
+                                </div>
+                                <div class="bg-indigo-50 p-5 rounded-lg border border-indigo-100">
+                                    <div class="flex items-center justify-between mb-2">
+                                        <span class="text-sm text-indigo-700 font-medium">Interview Score</span>
+                                        <span class="text-2xl font-bold text-indigo-600" id="progressInterviewScore">--</span>
+                                    </div>
+                                    <div class="w-full bg-indigo-200 rounded-full h-2">
+                                        <div id="interviewScoreBar" class="bg-indigo-600 h-2 rounded-full" style="width: 0%"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </main>
+        </div>
+    </div>
+
+
+    <div id="hr-page" class="page-content max-w-7xl mx-auto p-2 sm:p-4 hidden h-[calc(100vh-80px)]">
+        <div class="bg-gray-100 shadow-lg border-b-4 border-blue-500 rounded-lg sm:rounded-xl overflow-hidden flex h-full">
+            
+            <!-- Sidebar -->
+            <aside id="hr-sidebar" class="sidebar w-64 bg-gray-50 border-r border-gray-200 flex flex-col">
+                <div class="p-6 border-b border-gray-200 bg-white">
+                    <h2 class="text-xl font-bold text-gray-800 flex items-center">
+                        <span class="mr-2">👔</span>HR Dashboard
+                    </h2>
+                </div>
+                <nav class="flex-1 p-4 space-y-2">
+                    <button id="btn-hr-resumes" onclick="switchHRTab('resumes')" class="hr-nav-btn w-full text-left px-4 py-3 rounded-lg font-medium bg-blue-500 text-white shadow-md transition-all duration-200 flex items-center">
+                        <span class="mr-3">📄</span>
+                        <span>Student Resumes</span>
+                    </button>
+                    <button id="btn-hr-interviews" onclick="switchHRTab('interviews')" class="hr-nav-btn w-full text-left px-4 py-3 rounded-lg font-medium text-gray-600 hover:bg-gray-100 transition-all duration-200 flex items-center">
+                        <span class="mr-3">🎤</span>
+                        <span>Interview Performance</span>
+                    </button>
+                    <button id="btn-hr-analytics" onclick="switchHRTab('analytics')" class="hr-nav-btn w-full text-left px-4 py-3 rounded-lg font-medium text-gray-600 hover:bg-gray-100 transition-all duration-200 flex items-center">
+                        <span class="mr-3">📊</span>
+                        <span>Analytics Overview</span>
+                    </button>
+                </nav>
+            </aside>
+
+            <!-- Main Content -->
+            <main class="flex-1 overflow-y-auto p-8 bg-gradient-to-br from-gray-50 to-slate-100 relative">
+                
+                <!-- Student Resumes Tab -->
+                <div id="hr-tab-resumes" class="hr-tab-content fade-in">
+                    <div class="mb-6">
+                        <h3 class="text-2xl font-bold text-gray-800 mb-2">Student Resumes</h3>
+                        <p class="text-gray-600">Review and access student resume submissions</p>
+                    </div>
+                    <div id="studentResumes" class="space-y-4"></div>
+                </div>
+
+                <!-- Interview Performance Tab -->
+                <div id="hr-tab-interviews" class="hr-tab-content hidden fade-in">
+                    <div class="mb-6">
+                        <h3 class="text-2xl font-bold text-gray-800 mb-2">Interview Performance</h3>
+                        <p class="text-gray-600">Track student interview scores and performance metrics</p>
+                    </div>
+                    <div id="interviewScores" class="space-y-4"></div>
+                </div>
+
+                <!-- Analytics Overview Tab -->
+                <div id="hr-tab-analytics" class="hr-tab-content hidden fade-in">
+                    <div class="mb-6">
+                        <h3 class="text-2xl font-bold text-gray-800 mb-2">Analytics Overview</h3>
+                        <p class="text-gray-600">Comprehensive analytics and performance metrics</p>
+                    </div>
+                    <div class="grid md:grid-cols-3 gap-6">
+                        <div class="bg-gradient-to-br from-blue-50 to-blue-100 p-6 rounded-xl border border-blue-200 shadow-sm">
+                            <div class="flex items-center justify-between mb-3">
+                                <span class="text-3xl">📝</span>
+                                <div class="text-right">
+                                    <div class="text-3xl font-bold text-blue-600" id="avgAtsScore">0</div>
+                                </div>
+                            </div>
+                            <div class="text-sm font-medium text-gray-700">Average ATS Score</div>
+                            <div class="mt-2 text-xs text-gray-600">Based on resume analysis</div>
+                        </div>
+                        <div class="bg-gradient-to-br from-green-50 to-green-100 p-6 rounded-xl border border-green-200 shadow-sm">
+                            <div class="flex items-center justify-between mb-3">
+                                <span class="text-3xl">🎯</span>
+                                <div class="text-right">
+                                    <div class="text-3xl font-bold text-green-600" id="avgInterviewScore">0</div>
+                                </div>
+                            </div>
+                            <div class="text-sm font-medium text-gray-700">Average Interview Score</div>
+                            <div class="mt-2 text-xs text-gray-600">AI-evaluated performance</div>
+                        </div>
+                        <div class="bg-gradient-to-br from-purple-50 to-purple-100 p-6 rounded-xl border border-purple-200 shadow-sm">
+                            <div class="flex items-center justify-between mb-3">
+                                <span class="text-3xl">👥</span>
+                                <div class="text-right">
+                                    <div class="text-3xl font-bold text-purple-600" id="totalCandidates">0</div>
+                                </div>
+                            </div>
+                            <div class="text-sm font-medium text-gray-700">Total Candidates</div>
+                            <div class="mt-2 text-xs text-gray-600">Active student count</div>
+                        </div>
+                    </div>
+                    
+                    <!-- Additional Analytics Charts/Info -->
+                    <div class="mt-8 grid lg:grid-cols-2 gap-6">
+                        <div class="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
+                            <h4 class="font-semibold text-gray-800 mb-4 flex items-center">
+                                <span class="mr-2">📈</span>Performance Distribution
+                            </h4>
+                            <div class="space-y-3">
+                                <div>
+                                    <div class="flex justify-between text-sm mb-1">
+                                        <span class="text-gray-600">Excellent (80-100)</span>
+                                        <span class="font-medium text-green-600" id="excellentCount">0</span>
+                                    </div>
+                                    <div class="w-full bg-gray-200 rounded-full h-2">
+                                        <div id="excellentBar" class="bg-green-500 h-2 rounded-full" style="width: 0%"></div>
+                                    </div>
+                                </div>
+                                <div>
+                                    <div class="flex justify-between text-sm mb-1">
+                                        <span class="text-gray-600">Good (60-79)</span>
+                                        <span class="font-medium text-yellow-600" id="goodCount">0</span>
+                                    </div>
+                                    <div class="w-full bg-gray-200 rounded-full h-2">
+                                        <div id="goodBar" class="bg-yellow-500 h-2 rounded-full" style="width: 0%"></div>
+                                    </div>
+                                </div>
+                                <div>
+                                    <div class="flex justify-between text-sm mb-1">
+                                        <span class="text-gray-600">Needs Improvement (< 60)</span>
+                                        <span class="font-medium text-red-600" id="needsImprovementCount">0</span>
+                                    </div>
+                                    <div class="w-full bg-gray-200 rounded-full h-2">
+                                        <div id="needsImprovementBar" class="bg-red-500 h-2 rounded-full" style="width: 0%"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
+                            <h4 class="font-semibold text-gray-800 mb-4 flex items-center">
+                                <span class="mr-2">📊</span>Quick Stats
+                            </h4>
+                            <div class="space-y-3">
+                                <div class="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+                                    <span class="text-sm text-gray-600">Resumes Submitted</span>
+                                    <span class="font-bold text-gray-800" id="resumesSubmitted">0</span>
+                                </div>
+                                <div class="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+                                    <span class="text-sm text-gray-600">Interviews Completed</span>
+                                    <span class="font-bold text-gray-800" id="interviewsCompleted">0</span>
+                                </div>
+                                <div class="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+                                    <span class="text-sm text-gray-600">Pending Evaluations</span>
+                                    <span class="font-bold text-gray-800" id="pendingEvaluations">0</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </main>
+        </div>
+    </div>
+
+
+    <div id="chatbot-toggle" class="chatbot-toggle hidden">
+        <button onclick="toggleChatbot()" class="w-16 h-16 bg-indigo-500 hover:bg-indigo-600 text-white rounded-full shadow-lg flex items-center justify-center text-2xl">💬</button>
+    </div>
+    
+    <div id="chatbot-window" class="chatbot-window hidden">
+        <div class="bg-white rounded-lg shadow-xl border h-full flex flex-col">
+            <div class="bg-indigo-500 text-white p-4 rounded-t-lg flex justify-between items-center">
+                <h3 class="font-semibold flex items-center"><span class="mr-2">🤖</span>AI Skills Assistant</h3>
+                <button onclick="toggleChatbot()" class="text-white hover:text-gray-200">✕</button>
+            </div>
+            <div class="flex-1 p-4 overflow-y-auto" id="chatMessages">
+                <div class="chat-message text-gray-600 mb-2"><strong>AI Assistant:</strong> Hello! Ask me a question or click 'Quiz' to start a test.</div>
+            </div>
+            <div class="p-4 border-t">
+                <div class="flex space-x-2">
+                    <input type="text" id="chatInput" placeholder="Ask me anything..." class="flex-1 px-3 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 text-sm">
+                    <button onclick="sendMessage()" class="px-3 py-2 bg-indigo-500 text-white rounded-lg hover:bg-indigo-600 text-sm">Send</button>
+                    <button onclick="openQuizModal()" class="px-3 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 text-sm">Quiz</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+    <div id="quizModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden z-[1050]">
+        <div class="bg-white rounded-lg shadow-xl p-6 w-full max-w-md">
+            <h3 class="text-xl font-bold mb-4">Create a Custom Quiz</h3>
+            <div class="space-y-4">
+                <div>
+                    <label for="quizTopic" class="block text-sm font-medium text-gray-700">Topic</label>
+                    <input type="text" id="quizTopic" class="mt-1 w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500" placeholder="e.g., JavaScript, React Hooks">
+                </div>
+                <div>
+                    <label for="quizNumQuestions" class="block text-sm font-medium text-gray-700">Number of Questions</label>
+                    <input type="number" id="quizNumQuestions" class="mt-1 w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500" value="5">
+                </div>
+                <div>
+                    <label for="quizDuration" class="block text-sm font-medium text-gray-700">Duration (minutes)</label>
+                    <input type="number" id="quizDuration" class="mt-1 w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500" value="10">
+                </div>
+            </div>
+            <div class="mt-6 flex justify-end space-x-3">
+                <button onclick="closeQuizModal()" class="px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300">Cancel</button>
+                <button onclick="startCustomQuiz()" class="px-4 py-2 bg-indigo-500 text-white rounded-lg hover:bg-indigo-600">Start Quiz</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="interviewModal" class="interview-modal hidden">
+        <div class="interview-modal-content">
+            <div class="sticky top-0 bg-white border-b px-6 py-4 rounded-t-lg flex justify-between items-center z-10">
+                <h3 class="text-xl font-bold text-gray-800 flex items-center">
+                    <span class="mr-2">🎤</span>Mock Interview
+                </h3>
+                <div class="flex items-center gap-4">
+                    <div id="timerDisplay" class="hidden bg-purple-100 px-4 py-2 rounded-lg">
+                        <span class="text-sm font-semibold text-gray-600">⏱️ Time Left:</span>
+                        <span id="interviewTimer" class="text-lg font-bold text-purple-700 ml-2">00:00</span>
+                    </div>
+                    <button onclick="closeInterviewModal()" class="text-gray-400 hover:text-gray-600 text-2xl font-bold leading-none">
+                        ×
+                    </button>
+                </div>
+            </div>
+            <div class="p-6" id="interviewModalContent">
+                </div>
+        </div>
+    </div>
+
+    <!-- Student Progress Modal -->
+    <div id="studentProgressModal" class="interview-modal hidden">
+        <div class="interview-modal-content" style="max-width: 900px;">
+            <div class="sticky top-0 bg-white border-b px-6 py-4 rounded-t-lg flex justify-between items-center z-10">
+                <h3 class="text-xl font-bold text-gray-800 flex items-center">
+                    <span class="mr-2">📊</span><span id="modalStudentName">Student Progress</span>
+                </h3>
+                <button onclick="closeStudentProgressModal()" class="text-gray-400 hover:text-gray-600 text-2xl font-bold leading-none">
+                    ×
+                </button>
+            </div>
+            <div class="p-6" id="studentProgressModalContent">
+                <p class="text-gray-500 text-center py-8">Loading...</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Admin Task Modal -->
+    <div id="editAdminTaskModal" class="interview-modal hidden">
+        <div class="interview-modal-content" style="max-width: 600px;">
+            <div class="sticky top-0 bg-white border-b px-6 py-4 rounded-t-lg flex justify-between items-center z-10">
+                <h3 class="text-xl font-bold text-gray-800 flex items-center">
+                    <span class="mr-2">✏️</span>Edit Admin Task
+                </h3>
+                <button onclick="closeEditAdminTaskModal()" class="text-gray-400 hover:text-gray-600 text-2xl font-bold leading-none">
+                    ×
+                </button>
+            </div>
+            <div class="p-6">
+                <div class="space-y-4">
+                    <input type="hidden" id="editTaskId">
+                    <div>
+                        <label class="block text-sm font-medium mb-2 text-gray-700">Task Title</label>
+                        <input type="text" id="editTaskTitle" class="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium mb-2 text-gray-700">Assigned To</label>
+                        <select id="editTaskTeacher" class="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500">
+                            <option value="">Select Teacher</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium mb-2 text-gray-700">Description</label>
+                        <textarea id="editTaskDescription" class="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 h-32 resize-none"></textarea>
+                    </div>
+                    <div class="flex gap-3">
+                        <button onclick="updateAdminTask()" class="flex-1 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 font-semibold shadow-md hover:shadow-lg transition-all">
+                            Update Task
+                        </button>
+                        <button onclick="closeEditAdminTaskModal()" class="px-6 py-3 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 font-semibold transition-all">
+                            Cancel
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Dynamically set API URL based on current host (works for localhost and dev tunnels)
+        const getApiUrl = () => {
+            const protocol = window.location.protocol;
+            const host = window.location.host;
+            // If accessing via dev tunnel or any non-localhost domain, use same host
+            if (host.includes('devtunnels.ms') || host.includes('ngrok') || (!host.includes('localhost') && !host.includes('127.0.0.1'))) {
+                return `${protocol}//${host}/api`;
+            }
+            // Default to localhost for local development
+            return 'http://127.0.0.1:5001/api';
+        };
+        const API_URL = getApiUrl();
+        const BACKEND_URL = API_URL.replace('/api', '');
+        let users = [];
+        let assignments = [];
+
+        // --- THEME TOGGLE ---
+
+        function toggleTheme() {
+            const html = document.documentElement;
+            const currentTheme = html.classList.contains('dark') ? 'dark' : 'light';
+            const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+            
+            if (newTheme === 'dark') {
+                html.classList.add('dark');
+                document.getElementById('sunIcon').classList.remove('hidden');
+                document.getElementById('moonIcon').classList.add('hidden');
+            } else {
+                html.classList.remove('dark');
+                document.getElementById('sunIcon').classList.add('hidden');
+                document.getElementById('moonIcon').classList.remove('hidden');
+            }
+            
+            localStorage.setItem('theme', newTheme);
+        }
+
+        function initializeTheme() {
+            const savedTheme = localStorage.getItem('theme') || 'light';
+            const html = document.documentElement;
+            
+            if (savedTheme === 'dark') {
+                html.classList.add('dark');
+                document.getElementById('sunIcon').classList.remove('hidden');
+                document.getElementById('moonIcon').classList.add('hidden');
+            } else {
+                html.classList.remove('dark');
+                document.getElementById('sunIcon').classList.add('hidden');
+                document.getElementById('moonIcon').classList.remove('hidden');
+            }
+        }
+
+        // Initialize theme on page load
+        initializeTheme();
+
+        // --- MOBILE SIDEBAR TOGGLE ---
+
+        function toggleMobileSidebar() {
+            const overlay = document.getElementById('sidebar-overlay');
+            const sidebars = ['admin-sidebar', 'teacher-sidebar', 'student-sidebar', 'hr-sidebar'];
+            
+            sidebars.forEach(sidebarId => {
+                const sidebar = document.getElementById(sidebarId);
+                if (sidebar && !sidebar.closest('.hidden')) {
+                    sidebar.classList.toggle('active');
+                }
+            });
+            
+            overlay.classList.toggle('active');
+        }
+
+        // --- GLOBAL & STUDENT NAVIGATION ---
+
+        function switchStudentTab(tabName) {
+            document.querySelectorAll('.student-tab-content').forEach(el => {
+                el.classList.add('hidden');
+            });
+            document.getElementById(`tab-${tabName}`).classList.remove('hidden');
+            document.querySelectorAll('.student-nav-btn').forEach(btn => {
+                btn.className = 'student-nav-btn w-full text-left px-4 py-3 rounded-lg font-medium text-gray-600 hover:bg-gray-100 transition-all duration-200 flex items-center';
+            });
+            const activeBtn = document.getElementById(`btn-${tabName}`);
+            activeBtn.className = 'student-nav-btn w-full text-left px-4 py-3 rounded-lg font-medium bg-blue-500 text-white shadow-md transition-all duration-200 flex items-center';
+            
+            // Close mobile sidebar after selection
+            if (window.innerWidth <= 768) {
+                toggleMobileSidebar();
+            }
+        }
+        
+        async function fetchAllData() {
+            try {
+                const [usersResponse, assignmentsResponse] = await Promise.all([
+                    fetch(`${API_URL}/admin/users`),
+                    fetch(`${API_URL}/student/assignments`)
+                ]);
+                if (!usersResponse.ok) throw new Error('Failed to fetch users');
+                if (!assignmentsResponse.ok) throw new Error('Failed to fetch assignments');
+                users = await usersResponse.json();
+                assignments = await assignmentsResponse.json();
+            } catch (error) {
+                console.error('Error fetching initial data:', error);
+                alert('Could not connect to the server. Please ensure the backend is running.');
+            }
+        }
+        
+        async function showPage(pageId) {
+            document.querySelectorAll('.page-content').forEach(page => page.classList.add('hidden'));
+            const targetPage = document.getElementById(pageId + '-page');
+            targetPage.classList.remove('hidden');
+            targetPage.classList.add('fade-in');
+            
+            const chatbotToggle = document.getElementById('chatbot-toggle');
+            chatbotToggle.classList.toggle('hidden', pageId !== 'student');
+            if (pageId !== 'student') {
+                document.getElementById('chatbot-window').classList.add('hidden');
+            }
+            
+            await fetchAllData();
+            
+            if (pageId === 'admin') updateAdminView();
+            if (pageId === 'teacher') updateTeacherView();
+            if (pageId === 'student') updateStudentView();
+            if (pageId === 'hr') updateHRView();
+        }
+
+        // --- ADMIN LOGIC ---
+
+        function switchAdminTab(tabName) {
+            document.querySelectorAll('.admin-tab-content').forEach(el => el.classList.add('hidden'));
+            document.getElementById(`admin-tab-${tabName}`).classList.remove('hidden');
+            
+            document.querySelectorAll('.admin-nav-btn').forEach(btn => {
+                btn.className = 'admin-nav-btn w-full text-left px-4 py-3 rounded-lg font-medium text-gray-600 hover:bg-gray-100 transition-all duration-200 flex items-center';
+            });
+
+            const activeBtn = document.getElementById(`btn-admin-${tabName}`);
+            activeBtn.className = 'admin-nav-btn w-full text-left px-4 py-3 rounded-lg font-medium bg-blue-500 text-white shadow-md transition-all duration-200 flex items-center';
+            
+            // Close mobile sidebar after selection
+            if (window.innerWidth <= 768) {
+                toggleMobileSidebar();
+            }
+            
+            // Refresh data when switching to status tab
+            if (tabName === 'status') {
+                updateAdminStatus();
+            }
+            
+            // Load admin created tasks when switching to tasks tab
+            if (tabName === 'tasks') {
+                loadAdminCreatedTasks();
+            }
+        }
+
+        function updateAdminView() { 
+            updateUsersList(); 
+            updateTeacherDropdown(); 
+            updateAdminStats(); 
+            updateAdminStatus();
+        }
+
+        async function updateAdminStatus() {
+            try {
+                // Fetch submissions data
+                const submissionsResponse = await fetch(`${API_URL}/teacher/submissions`);
+                let allSubmissions = [];
+                if (submissionsResponse.ok) {
+                    allSubmissions = await submissionsResponse.json();
+                }
+
+                const students = users.filter(u => u.role === 'student');
+                const teachers = users.filter(u => u.role === 'teacher');
+
+                // Update student progress
+                const studentProgressHtml = students.map(student => {
+                    const studentSubs = allSubmissions.filter(s => s.student_id === student.id);
+                    const totalAssignments = assignments.length;
+                    const completionRate = totalAssignments > 0 ? Math.round((studentSubs.length / totalAssignments) * 100) : 0;
+                    const progressColor = completionRate >= 80 ? 'bg-green-500' : completionRate >= 50 ? 'bg-yellow-500' : 'bg-red-500';
+
+                    return `
+                        <div class="bg-gray-50 p-4 rounded-lg border hover:shadow-sm transition-all">
+                            <div class="flex items-center justify-between mb-3">
+                                <div class="flex items-center gap-3 flex-1">
+                                    <div class="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center text-lg">🎓</div>
+                                    <div class="flex-1">
+                                        <div class="font-semibold text-gray-800">${student.name}</div>
+                                        <div class="text-xs text-gray-500">ID: ${student.id.slice(-8)}</div>
+                                    </div>
+                                </div>
+                                <div class="flex items-center gap-3">
+                                    <div class="text-right">
+                                        <div class="text-sm font-semibold ${completionRate >= 80 ? 'text-green-600' : completionRate >= 50 ? 'text-yellow-600' : 'text-red-600'}">
+                                            ${completionRate}%
+                                        </div>
+                                        <div class="text-xs text-gray-500">${studentSubs.length}/${totalAssignments} done</div>
+                                    </div>
+                                    <button onclick="viewStudentProgress('${student.id}')" class="p-2 bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg transition-all shadow-sm hover:shadow group" title="View Details">
+                                        <svg class="w-4 h-4 group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="w-full bg-gray-200 rounded-full h-2">
+                                <div class="${progressColor} h-2 rounded-full transition-all" style="width: ${completionRate}%"></div>
+                            </div>
+                        </div>
+                    `;
+                }).join('') || '<p class="text-gray-500 text-center py-8">No students found.</p>';
+
+                document.getElementById('adminStudentProgress').innerHTML = studentProgressHtml;
+
+                // Update teacher tasks status
+                let teacherTasksHtml = '';
+                let totalTasks = 0;
+                let completedTasks = 0;
+
+                for (const teacher of teachers) {
+                    try {
+                        const tasksResponse = await fetch(`${API_URL}/teacher/admin-assignments/${teacher.id}`);
+                        if (tasksResponse.ok) {
+                            const tasks = await tasksResponse.json();
+                            totalTasks += tasks.length;
+                            const completed = tasks.filter(t => t.status === 'Completed').length;
+                            completedTasks += completed;
+                            const taskCompletionRate = tasks.length > 0 ? Math.round((completed / tasks.length) * 100) : 0;
+                            const taskProgressColor = taskCompletionRate >= 80 ? 'bg-green-500' : taskCompletionRate >= 50 ? 'bg-yellow-500' : 'bg-red-500';
+
+                            teacherTasksHtml += `
+                                <div class="bg-gray-50 p-4 rounded-lg border hover:shadow-sm transition-all">
+                                    <div class="flex items-center justify-between mb-2">
+                                        <div class="flex items-center gap-3">
+                                            <div class="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center text-lg">👩‍🏫</div>
+                                            <div>
+                                                <div class="font-semibold text-gray-800">${teacher.name}</div>
+                                                <div class="text-xs text-gray-500">${tasks.length} task${tasks.length !== 1 ? 's' : ''} assigned</div>
+                                            </div>
+                                        </div>
+                                        <div class="text-right">
+                                            <div class="text-sm font-semibold ${taskCompletionRate >= 80 ? 'text-green-600' : taskCompletionRate >= 50 ? 'text-yellow-600' : 'text-red-600'}">
+                                                ${taskCompletionRate}%
+                                            </div>
+                                            <div class="text-xs text-gray-500">${completed}/${tasks.length} complete</div>
+                                        </div>
+                                    </div>
+                                    <div class="w-full bg-gray-200 rounded-full h-2">
+                                        <div class="${taskProgressColor} h-2 rounded-full transition-all" style="width: ${taskCompletionRate}%"></div>
+                                    </div>
+                                </div>
+                            `;
+                        }
+                    } catch (error) {
+                        console.error(`Error fetching tasks for teacher ${teacher.id}:`, error);
+                    }
+                }
+
+                document.getElementById('adminTeacherTasks').innerHTML = teacherTasksHtml || '<p class="text-gray-500 text-center py-8">No teachers or tasks found.</p>';
+
+                // Update overall statistics
+                const totalPossibleSubmissions = students.length * assignments.length;
+                const avgCompletion = totalPossibleSubmissions > 0 ? Math.round((allSubmissions.length / totalPossibleSubmissions) * 100) : 0;
+                const teacherTaskCompletion = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
+
+                document.getElementById('avgStudentCompletion').textContent = avgCompletion + '%';
+                document.getElementById('avgCompletionBar').style.width = avgCompletion + '%';
+                document.getElementById('teacherTasksCompleted').textContent = `${completedTasks}/${totalTasks}`;
+                document.getElementById('teacherTasksBar').style.width = teacherTaskCompletion + '%';
+                document.getElementById('totalSubmissions').textContent = allSubmissions.length;
+
+            } catch (error) {
+                console.error('Error updating admin status:', error);
+                document.getElementById('adminStudentProgress').innerHTML = '<p class="text-red-500 text-center py-8">Failed to load progress data.</p>';
+                document.getElementById('adminTeacherTasks').innerHTML = '<p class="text-red-500 text-center py-8">Failed to load task data.</p>';
+            }
+        }
+
+        async function addUser() { const nameInput = document.getElementById('newUserName'); const role = document.getElementById('userRole').value; const name = nameInput.value.trim(); if (!name) return alert('Please enter a user name.'); try { const response = await fetch(`${API_URL}/admin/users`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, role }) }); if (!response.ok) throw new Error('Server responded with an error.'); nameInput.value = ''; await fetchAllData(); updateAdminView(); } catch (error) { console.error('Error adding user:', error); alert('Failed to add user.'); } }
+        async function removeUser(userId) { if (!confirm('Are you sure you want to remove this user?')) return; try { const response = await fetch(`${API_URL}/admin/users/${userId}`, { method: 'DELETE' }); if (!response.ok) throw new Error('Server responded with an error.'); await fetchAllData(); updateAdminView(); } catch (error) { console.error('Error removing user:', error); alert('Failed to remove user.'); } }
+        async function assignWork() { const title = document.getElementById('assignmentTitle').value.trim(); const teacherId = document.getElementById('assignTeacher').value; const description = document.getElementById('assignmentDesc').value.trim(); if (!title || !teacherId || !description) return alert('Please fill all assignment fields.'); try { const response = await fetch(`${API_URL}/admin/assignments`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title, teacherId, description }) }); if (!response.ok) throw new Error('Server responded with an error.'); alert('Work assigned successfully!'); document.getElementById('assignmentTitle').value = ''; document.getElementById('assignTeacher').value = ''; document.getElementById('assignmentDesc').value = ''; await fetchAllData(); updateAdminStats(); } catch (error) { console.error('Error assigning work:', error); alert('Failed to assign work.'); } }
+        function updateUsersList() { 
+            const usersList = document.getElementById('usersList'); 
+            usersList.innerHTML = users.map(user => {
+                const roleColor = user.role === 'student' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800';
+                const roleIcon = user.role === 'student' ? '🎓' : '👩‍🏫';
+                return `
+                    <div class="flex justify-between items-center bg-white p-4 rounded-lg border hover:shadow-sm transition-all">
+                        <div class="flex items-center gap-3">
+                            <div class="w-10 h-10 ${roleColor} rounded-full flex items-center justify-center text-lg">
+                                ${roleIcon}
+                            </div>
+                            <div>
+                                <div class="font-semibold text-gray-800">${user.name}</div>
+                                <div class="text-xs text-gray-500 capitalize">${user.role}</div>
+                            </div>
+                        </div>
+                        <button onclick="removeUser('${user.id}')" class="px-3 py-1.5 bg-red-500 text-white rounded-lg hover:bg-red-600 text-sm transition-all">
+                            Remove
+                        </button>
+                    </div>
+                `;
+            }).join('') || '<p class="text-gray-500 text-center py-8">No users found.</p>'; 
+        }
+        function updateTeacherDropdown() { const dropdown = document.getElementById('assignTeacher'); const teachers = users.filter(user => user.role === 'teacher'); dropdown.innerHTML = '<option value="">Select Teacher</option>' + teachers.map(teacher => `<option value="${teacher.id}">${teacher.name}</option>`).join(''); }
+        function updateAdminStats() { const students = users.filter(u => u.role === 'student'); const teachers = users.filter(u => u.role === 'teacher'); const interviews = students.filter(s => s.interviewScore); document.getElementById('totalStudents').textContent = students.length; document.getElementById('totalTeachers').textContent = teachers.length; document.getElementById('totalAssignments').textContent = assignments.length; document.getElementById('totalInterviews').textContent = interviews.length; }
+        
+        // Admin Created Tasks Functions
+        async function loadAdminCreatedTasks() {
+            try {
+                const teachers = users.filter(u => u.role === 'teacher');
+                let allTasks = [];
+                
+                // Fetch tasks for all teachers
+                for (const teacher of teachers) {
+                    try {
+                        const response = await fetch(`${API_URL}/teacher/admin-assignments/${teacher.id}`);
+                        if (response.ok) {
+                            const tasks = await response.json();
+                            allTasks = allTasks.concat(tasks.map(task => ({ ...task, teacherName: teacher.name, teacherId: teacher.id })));
+                        }
+                    } catch (error) {
+                        console.error(`Error fetching tasks for teacher ${teacher.id}:`, error);
+                    }
+                }
+                
+                if (allTasks.length === 0) {
+                    document.getElementById('adminCreatedTasksList').innerHTML = '<p class="text-gray-500 text-center py-8">No tasks created yet.</p>';
+                    return;
+                }
+                
+                const tasksHtml = allTasks.map(task => {
+                    const statusClass = task.completed ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800';
+                    const statusIcon = task.completed ? '✅' : '⏳';
+                    
+                    return `
+                        <div class="bg-gray-50 border rounded-lg p-5 hover:shadow-md transition-all">
+                            <div class="flex justify-between items-start mb-3">
+                                <div class="flex-1">
+                                    <h5 class="font-bold text-lg text-gray-800 mb-1">${task.title}</h5>
+                                    <p class="text-sm text-gray-600 mb-2">${task.description}</p>
+                                    <div class="flex items-center gap-3 text-sm">
+                                        <span class="text-gray-500">👩‍🏫 <span class="font-medium">${task.teacherName}</span></span>
+                                        <span class="px-3 py-1 rounded-full text-xs font-medium ${statusClass}">
+                                            ${statusIcon} ${task.completed ? 'Completed' : 'Pending'}
+                                        </span>
+                                    </div>
+                                </div>
+                                <button onclick="openEditAdminTaskModal('${task.id}', '${task.teacherId}')" class="ml-3 p-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg transition-all shadow-sm hover:shadow group" title="Edit Task">
+                                    <svg class="w-5 h-5 group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+                
+                document.getElementById('adminCreatedTasksList').innerHTML = tasksHtml;
+                
+            } catch (error) {
+                console.error('Error loading admin tasks:', error);
+                document.getElementById('adminCreatedTasksList').innerHTML = '<p class="text-red-500 text-center py-8">Failed to load tasks.</p>';
+            }
+        }
+        
+        async function openEditAdminTaskModal(taskId, teacherId) {
+            try {
+                const response = await fetch(`${API_URL}/teacher/admin-assignments/${teacherId}`);
+                if (!response.ok) throw new Error('Failed to fetch tasks');
+                
+                const tasks = await response.json();
+                const task = tasks.find(t => t.id === taskId);
+                
+                if (!task) {
+                    alert('Task not found');
+                    return;
+                }
+                
+                // Populate modal fields
+                document.getElementById('editTaskId').value = taskId;
+                document.getElementById('editTaskTitle').value = task.title;
+                document.getElementById('editTaskDescription').value = task.description;
+                
+                // Populate teacher dropdown
+                const teachers = users.filter(u => u.role === 'teacher');
+                const dropdown = document.getElementById('editTaskTeacher');
+                dropdown.innerHTML = '<option value="">Select Teacher</option>' + 
+                    teachers.map(teacher => `<option value="${teacher.id}" ${teacher.id === teacherId ? 'selected' : ''}>${teacher.name}</option>`).join('');
+                
+                // Show modal
+                document.getElementById('editAdminTaskModal').classList.remove('hidden');
+                document.body.style.overflow = 'hidden';
+                
+            } catch (error) {
+                console.error('Error opening edit modal:', error);
+                alert('Failed to load task details');
+            }
+        }
+        
+        function closeEditAdminTaskModal() {
+            document.getElementById('editAdminTaskModal').classList.add('hidden');
+            document.body.style.overflow = '';
+        }
+        
+        async function updateAdminTask() {
+            const taskId = document.getElementById('editTaskId').value;
+            const title = document.getElementById('editTaskTitle').value.trim();
+            const teacherId = document.getElementById('editTaskTeacher').value;
+            const description = document.getElementById('editTaskDescription').value.trim();
+            
+            if (!title || !teacherId || !description) {
+                alert('Please fill all fields');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${API_URL}/admin/assignments/${taskId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ title, teacherId, description })
+                });
+                
+                if (!response.ok) throw new Error('Server responded with an error');
+                
+                alert('Task updated successfully!');
+                closeEditAdminTaskModal();
+                loadAdminCreatedTasks();
+                
+            } catch (error) {
+                console.error('Error updating task:', error);
+                alert('Failed to update task. Please try again.');
+            }
+        }
+        
+        // --- TEACHER LOGIC (CORRECTED) ---
+
+        function switchTeacherTab(tabName) {
+            document.querySelectorAll('.teacher-tab-content').forEach(el => el.classList.add('hidden'));
+            document.getElementById(`teacher-tab-${tabName}`).classList.remove('hidden');
+            
+            document.querySelectorAll('.teacher-nav-btn').forEach(btn => {
+                btn.className = 'teacher-nav-btn w-full text-left px-4 py-3 rounded-lg font-medium text-gray-600 hover:bg-gray-100 transition-all duration-200 flex items-center';
+            });
+
+            const activeBtn = document.getElementById(`btn-t-${tabName}`);
+            activeBtn.className = 'teacher-nav-btn w-full text-left px-4 py-3 rounded-lg font-medium bg-blue-500 text-white shadow-md transition-all duration-200 flex items-center';
+            
+            // Close mobile sidebar after selection
+            if (window.innerWidth <= 768) {
+                toggleMobileSidebar();
+            }
+            
+            // Refresh data when switching to specific tabs
+            if (tabName === 'assignment') {
+                updateAdminAssignedWork();
+            } else if (tabName === 'submissions') {
+                updateTeacherSubmissions();
+            }
+        }
+
+        async function updateTeacherView() {
+            // 1. Update Student Progress Tab
+            const students = users.filter(user => user.role === 'student');
+            
+            // Update submissions tab
+            await updateTeacherSubmissions();
+            document.getElementById('studentProgress').innerHTML = students.map(student => `
+                <div class="bg-white p-4 rounded-lg border hover:shadow-sm transition-shadow">
+                    <div class="flex justify-between items-center mb-2">
+                        <div class="font-bold text-gray-800">${student.name}</div>
+                        <div class="flex items-center gap-2">
+                            <span class="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded-full">Student</span>
+                            <button onclick="viewStudentProgress('${student.id}')" class="p-2 bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg transition-all shadow-sm hover:shadow group" title="View Details">
+                                <svg class="w-4 h-4 group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-4 text-sm mb-3">
+                        <div>
+                            <span class="text-gray-500">ATS Score:</span>
+                            <span class="font-semibold text-gray-800">${student.atsScore || 'N/A'}</span>
+                        </div>
+                        <div>
+                            <span class="text-gray-500">Interview:</span>
+                            <span class="font-semibold text-gray-800">${student.interviewScore || 'N/A'}</span>
+                        </div>
+                    </div>
+                    <div class="w-full bg-gray-100 rounded-full h-2">
+                        <div class="bg-gradient-to-r from-blue-500 to-indigo-600 h-2 rounded-full" style="width: ${student.atsScore || 0}%"></div>
+                    </div>
+                </div>
+            `).join('') || '<p class="text-gray-500 text-center py-8">No students found.</p>';
+
+            // 2. Update My Created Assignments Tab (In-Memory)
+            // 2. Update My Created Assignments Tab (In-Memory)
+            const teacherAssignments = assignments.filter(a => a.createdBy === 'teacher');
+            document.getElementById('teacherAssignments').innerHTML = teacherAssignments.map(assignment => {
+                const typeIcon = { 'quiz': '📝', 'presentation': '📊', 'manual': '📋' }[assignment.type] || '📋';
+                const typeBadge = { 'quiz': 'bg-purple-100 text-purple-800', 'presentation': 'bg-orange-100 text-orange-800', 'manual': 'bg-blue-100 text-blue-800' }[assignment.type] || 'bg-blue-100 text-blue-800';
+                
+                // --- NEW: Edit Button Added Below ---
+                return `
+                    <div class="bg-white p-5 rounded-lg border hover:shadow-md transition-shadow relative group">
+                        <div class="flex justify-between items-start mb-3">
+                            <h4 class="font-bold text-lg text-gray-800 pr-8">${assignment.title}</h4>
+                            <span class="px-3 py-1 text-xs font-medium rounded-full ${typeBadge}">${typeIcon} ${assignment.type || 'manual'}</span>
+                        </div>
+                        <p class="text-sm text-gray-600 mb-4 line-clamp-2">${assignment.description}</p>
+                        <div class="flex items-center justify-between border-t pt-3 mt-auto">
+                            <div class="text-xs text-gray-500">
+                                <span class="mr-2">📅 Due: ${assignment.dueDate}</span>
+                            </div>
+                            <button onclick="openEditModal('${assignment.id}')" class="px-3 py-1.5 bg-gray-100 text-gray-600 text-sm rounded hover:bg-blue-50 hover:text-blue-600 transition-colors border border-gray-200 font-medium flex items-center">
+                                <span class="mr-1">✏️</span> Edit
+                            </button>
+                        </div>
+                    </div>`;
+            }).join('') || '<p class="text-gray-500 text-center py-12 italic">You have not created any assignments yet.</p>';
+            // 3. Fetch Admin Tasks initially
+            await updateAdminAssignedWork();
+        }
+
+        async function updateTeacherSubmissions() {
+            try {
+                // Fetch all student submissions
+                const response = await fetch(`${API_URL}/teacher/submissions`);
+                let allSubmissions = [];
+                
+                if (response.ok) {
+                    allSubmissions = await response.json();
+                }
+
+                const students = users.filter(u => u.role === 'student');
+                const totalAssignments = assignments.length;
+                const totalPossibleSubmissions = students.length * totalAssignments;
+                const uniqueStudents = new Set(allSubmissions.map(s => s.student_id)).size;
+                const avgRate = totalPossibleSubmissions > 0 ? Math.round((allSubmissions.length / totalPossibleSubmissions) * 100) : 0;
+                const pendingSubmissions = totalPossibleSubmissions - allSubmissions.length;
+
+                // Update statistics
+                document.getElementById('totalSubmissionsCount').textContent = allSubmissions.length;
+                document.getElementById('uniqueStudentsCount').textContent = uniqueStudents;
+                document.getElementById('avgSubmissionRate').textContent = avgRate + '%';
+                document.getElementById('pendingSubmissionsCount').textContent = pendingSubmissions;
+
+                // Populate filter dropdown
+                const filterDropdown = document.getElementById('filterByAssignment');
+                filterDropdown.innerHTML = '<option value="all">All Assignments</option>' + 
+                    assignments.map(a => `<option value="${a.id}">${a.title}</option>`).join('');
+
+                // Group submissions by assignment
+                const submissionsByAssignment = {};
+                allSubmissions.forEach(sub => {
+                    if (!submissionsByAssignment[sub.assignment_id]) {
+                        submissionsByAssignment[sub.assignment_id] = [];
+                    }
+                    submissionsByAssignment[sub.assignment_id].push(sub);
+                });
+
+                // Display submissions by assignment
+                const submissionsHtml = assignments.map(assignment => {
+                    const subs = submissionsByAssignment[assignment.id] || [];
+                    const submissionCount = subs.length;
+                    const studentCount = students.length;
+                    const percentage = studentCount > 0 ? Math.round((submissionCount / studentCount) * 100) : 0;
+                    
+                    return `
+                        <div class="border rounded-lg overflow-hidden hover:shadow-md transition-all">
+                            <div class="bg-gradient-to-r from-blue-50 to-indigo-50 p-4 border-b cursor-pointer" onclick="toggleAssignmentSubmissions('${assignment.id}')">
+                                <div class="flex items-center justify-between">
+                                    <div class="flex-1">
+                                        <h5 class="font-semibold text-gray-800 flex items-center">
+                                            📝 ${assignment.title}
+                                            <span id="toggle-icon-${assignment.id}" class="ml-2 text-gray-500">▼</span>
+                                        </h5>
+                                        <p class="text-sm text-gray-600 mt-1">Due: ${assignment.dueDate}</p>
+                                    </div>
+                                    <div class="text-right ml-4">
+                                        <div class="text-2xl font-bold text-blue-600">${submissionCount}/${studentCount}</div>
+                                        <div class="text-xs text-gray-500">Submitted</div>
+                                        <div class="mt-1">
+                                            <span class="text-xs px-2 py-1 rounded-full ${percentage >= 80 ? 'bg-green-100 text-green-700' : percentage >= 50 ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'}">
+                                                ${percentage}%
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="mt-3">
+                                    <div class="w-full bg-gray-200 rounded-full h-2">
+                                        <div class="bg-gradient-to-r from-blue-500 to-green-500 h-2 rounded-full transition-all" style="width: ${percentage}%"></div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div id="submissions-${assignment.id}" class="hidden p-4 bg-gray-50">
+                                ${subs.length > 0 ? subs.map(sub => {
+                                    const student = users.find(u => u.id === sub.student_id);
+                                    const studentName = student ? student.name : 'Unknown Student';
+                                    const submissionDate = new Date(sub.submitted_at).toLocaleString();
+                                    const backendUrl = BACKEND_URL;
+                                    const fileUrl = sub.file_path ? `${backendUrl}${sub.file_path}` : '#';
+                                    
+                                    return `
+                                        <div class="bg-white p-4 rounded-lg border mb-3 hover:shadow-sm transition-all">
+                                            <div class="flex items-start justify-between">
+                                                <div class="flex-1">
+                                                    <div class="flex items-center gap-2 mb-2">
+                                                        <span class="text-lg">👤</span>
+                                                        <span class="font-semibold text-gray-800">${studentName}</span>
+                                                        <span class="text-xs px-2 py-1 bg-green-100 text-green-700 rounded-full">✓ Submitted</span>
+                                                    </div>
+                                                    <div class="space-y-1 text-sm text-gray-600">
+                                                        <div>📅 <span class="font-medium">Submitted:</span> ${submissionDate}</div>
+                                                        ${sub.filename ? `<div>📎 <span class="font-medium">File:</span> ${sub.filename}</div>` : ''}
+                                                        ${sub.notes ? `<div class="mt-2 p-2 bg-blue-50 rounded border-l-2 border-blue-400"><span class="font-medium">Notes:</span> ${sub.notes}</div>` : ''}
+                                                    </div>
+                                                </div>
+                                                <div class="ml-4">
+                                                    ${sub.file_path ? `
+                                                        <a href="${fileUrl}" target="_blank" class="inline-flex items-center px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 text-sm transition-all shadow-sm hover:shadow">
+                                                            📥 View File
+                                                        </a>
+                                                    ` : `
+                                                        <span class="inline-flex items-center px-4 py-2 bg-gray-300 text-gray-600 rounded-lg text-sm cursor-not-allowed">
+                                                            No File
+                                                        </span>
+                                                    `}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    `;
+                                }).join('') : '<p class="text-gray-500 text-center py-4">No submissions yet for this assignment.</p>'}
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+
+                document.getElementById('submissionsByAssignment').innerHTML = submissionsHtml || '<p class="text-gray-500 text-center py-8">No assignments available.</p>';
+
+                // Update student progress table
+                const studentProgressData = students.map(student => {
+                    const studentSubs = allSubmissions.filter(s => s.student_id === student.id);
+                    const completionRate = totalAssignments > 0 ? Math.round((studentSubs.length / totalAssignments) * 100) : 0;
+                    const lastSubmission = studentSubs.length > 0 
+                        ? new Date(Math.max(...studentSubs.map(s => new Date(s.submitted_at)))).toLocaleDateString()
+                        : 'No submissions';
+                    
+                    return {
+                        student,
+                        submittedCount: studentSubs.length,
+                        completionRate,
+                        lastSubmission
+                    };
+                });
+
+                const tableHtml = studentProgressData.map(data => {
+                    const progressColor = data.completionRate >= 80 ? 'text-green-600' : data.completionRate >= 50 ? 'text-yellow-600' : 'text-red-600';
+                    return `
+                        <tr class="hover:bg-gray-50 transition-colors">
+                            <td class="px-4 py-3">
+                                <div class="flex items-center">
+                                    <div class="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center mr-3 text-sm">👤</div>
+                                    <span class="font-medium text-gray-800">${data.student.name}</span>
+                                </div>
+                            </td>
+                            <td class="px-4 py-3 text-center">
+                                <span class="font-semibold text-gray-700">${data.submittedCount}/${totalAssignments}</span>
+                            </td>
+                            <td class="px-4 py-3 text-center">
+                                <div class="flex flex-col items-center">
+                                    <span class="font-bold ${progressColor}">${data.completionRate}%</span>
+                                    <div class="w-20 bg-gray-200 rounded-full h-1.5 mt-1">
+                                        <div class="bg-blue-500 h-1.5 rounded-full" style="width: ${data.completionRate}%"></div>
+                                    </div>
+                                </div>
+                            </td>
+                            <td class="px-4 py-3 text-center text-sm text-gray-600">
+                                ${data.lastSubmission}
+                            </td>
+                            <td class="px-4 py-3 text-center">
+                                <button onclick="viewStudentDetails('${data.student.id}')" class="px-3 py-1 bg-indigo-500 text-white rounded hover:bg-indigo-600 text-xs transition-all">
+                                    View Details
+                                </button>
+                            </td>
+                        </tr>
+                    `;
+                }).join('');
+
+                document.getElementById('studentProgressTableBody').innerHTML = tableHtml || '<tr><td colspan="5" class="px-4 py-8 text-center text-gray-500">No students found.</td></tr>';
+
+            } catch (error) {
+                console.error('Error fetching teacher submissions:', error);
+                document.getElementById('submissionsByAssignment').innerHTML = '<p class="text-red-500 text-center py-8">Failed to load submissions.</p>';
+            }
+        }
+
+        function toggleAssignmentSubmissions(assignmentId) {
+            const submissionsDiv = document.getElementById(`submissions-${assignmentId}`);
+            const icon = document.getElementById(`toggle-icon-${assignmentId}`);
+            
+            if (submissionsDiv.classList.contains('hidden')) {
+                submissionsDiv.classList.remove('hidden');
+                icon.textContent = '▲';
+            } else {
+                submissionsDiv.classList.add('hidden');
+                icon.textContent = '▼';
+            }
+        }
+
+        function filterSubmissions() {
+            const searchTerm = document.getElementById('searchSubmissions').value.toLowerCase();
+            const selectedAssignment = document.getElementById('filterByAssignment').value;
+            
+            // Simple filter implementation - you can enhance this
+            updateTeacherSubmissions();
+        }
+
+        function viewStudentDetails(studentId) {
+            const student = users.find(u => u.id === studentId);
+            if (!student) return;
+            
+            alert(`Student: ${student.name}\nID: ${studentId}\n\nDetailed view coming soon!`);
+        }
+
+        async function updateAdminAssignedWork() {
+            const currentTeacher = users.find(u => u.role === 'teacher');
+            
+            if (!currentTeacher) {
+                document.getElementById('adminAssignedTasks').innerHTML = '<p class="text-red-500 text-center">Error: Teacher profile not found.</p>';
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_URL}/teacher/admin-assignments/${currentTeacher.id}`);
+                if (!response.ok) throw new Error('Failed to fetch tasks');
+                
+                const tasks = await response.json();
+                
+                document.getElementById('adminAssignedTasks').innerHTML = tasks.map(task => {
+                    const isCompleted = task.status === 'Completed';
+                    const statusClass = isCompleted ? 'bg-green-100 text-green-800 border-green-200' : 'bg-yellow-100 text-yellow-800 border-yellow-200';
+                    const btnClass = isCompleted 
+                        ? 'bg-gray-100 text-gray-400 cursor-not-allowed' 
+                        : 'bg-green-500 text-white hover:bg-green-600 shadow-sm hover:shadow';
+                    const btnText = isCompleted ? '✓ Completed' : 'Mark as Completed';
+                    const btnAction = isCompleted ? '' : `onclick="markTaskComplete('${task.id}')"`;
+
+                    return `
+                        <div class="bg-white p-5 rounded-lg border border-l-4 ${isCompleted ? 'border-l-green-500' : 'border-l-yellow-500'} hover:shadow-md transition-all">
+                            <div class="flex flex-col md:flex-row justify-between md:items-center gap-4">
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-3 mb-2">
+                                        <h4 class="font-bold text-lg text-gray-800">${task.title}</h4>
+                                        <span class="px-2 py-0.5 text-xs font-medium rounded border ${statusClass}">${task.status}</span>
+                                    </div>
+                                    <p class="text-gray-600 text-sm mb-2">${task.description}</p>
+                                    <p class="text-xs text-gray-500">📅 Assigned Date: ${task.dueDate}</p>
+                                </div>
+                                <div>
+                                    <button ${btnAction} class="px-4 py-2 rounded-lg text-sm font-medium transition-colors w-full md:w-auto ${btnClass}">
+                                        ${btnText}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }).join('') || '<div class="text-center py-12"><div class="text-4xl mb-3">📭</div><p class="text-gray-500">No tasks assigned by Admin yet.</p></div>';
+                
+            } catch (error) {
+                console.error('Error fetching admin tasks:', error);
+                document.getElementById('adminAssignedTasks').innerHTML = '<p class="text-red-500 text-center">Failed to load assigned tasks.</p>';
+            }
+        }
+
+        async function markTaskComplete(taskId) {
+            try {
+                const response = await fetch(`${API_URL}/teacher/admin-assignments/${taskId}/complete`, {
+                    method: 'PATCH'
+                });
+                
+                if (response.ok) {
+                    updateAdminAssignedWork();
+                } else {
+                    alert('Failed to update task status');
+                }
+            } catch (error) {
+                console.error('Error completing task:', error);
+                alert('Error connecting to server');
+            }
+        }
+
+        // --- NEW: createAssignment Function (Fixed) ---
+        async function createAssignment() {
+            const title = document.getElementById('teacherAssignmentTitle').value.trim();
+            const description = document.getElementById('teacherAssignmentDesc').value.trim();
+            const dueDate = document.getElementById('assignmentDueDate').value;
+            const type = document.getElementById('assignmentType').value;
+
+            if (!title || !description || !dueDate) {
+                return alert('Please fill in all required fields (Title, Description, and Due Date).');
+            }
+
+            try {
+                // Show loading state
+                const btn = document.querySelector('button[onclick="createAssignment()"]');
+                const originalText = btn.innerHTML;
+                btn.disabled = true;
+                btn.innerHTML = '<span class="animate-spin mr-2">🔄</span> Creating...';
+
+                const response = await fetch(`${API_URL}/teacher/assignments`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ title, description, dueDate, type })
+                });
+
+                if (!response.ok) throw new Error('Server error');
+
+                alert('Assignment created successfully!');
+
+                // Clear form inputs
+                document.getElementById('teacherAssignmentTitle').value = '';
+                document.getElementById('teacherAssignmentDesc').value = '';
+                document.getElementById('assignmentDueDate').value = '';
+                document.getElementById('assignmentType').value = 'manual';
+
+                // Reset button
+                btn.disabled = false;
+                btn.innerHTML = originalText;
+
+                // Refresh data and switch to "My Assignments" tab
+                await fetchAllData();
+                updateTeacherView();
+                switchTeacherTab('my-assignments');
+
+            } catch (error) {
+                console.error('Error creating assignment:', error);
+                alert('Failed to create assignment. Please try again.');
+                const btn = document.querySelector('button[onclick="createAssignment()"]');
+                if(btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = '<span class="mr-2">🚀</span> Publish Assignment';
+                }
+            }
+        }
+        
+        // --- EDIT ASSIGNMENT LOGIC ---
+
+        function openEditModal(assignmentId) {
+            // Find the assignment details from the local array
+            const assignment = assignments.find(a => a.id === assignmentId);
+            if (!assignment) return;
+
+            // Populate the modal fields
+            document.getElementById('editAssignmentId').value = assignment.id;
+            document.getElementById('editAssignmentTitle').value = assignment.title;
+            document.getElementById('editAssignmentDesc').value = assignment.description;
+            document.getElementById('editAssignmentDueDate').value = assignment.dueDate;
+
+            // Show the modal
+            document.getElementById('editAssignmentModal').classList.remove('hidden');
+        }
+
+        function closeEditModal() {
+            document.getElementById('editAssignmentModal').classList.add('hidden');
+        }
+
+        async function saveAssignmentChanges() {
+            const id = document.getElementById('editAssignmentId').value;
+            const title = document.getElementById('editAssignmentTitle').value.trim();
+            const description = document.getElementById('editAssignmentDesc').value.trim();
+            const dueDate = document.getElementById('editAssignmentDueDate').value;
+
+            if (!title || !description || !dueDate) {
+                return alert("Please fill in all fields.");
+            }
+
+            try {
+                const response = await fetch(`${API_URL}/teacher/assignments/${id}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ title, description, dueDate })
+                });
+
+                if (response.ok) {
+                    alert("Assignment updated successfully!");
+                    closeEditModal();
+                    await fetchAllData(); // Refresh data
+                    updateTeacherView();  // Update UI
+                } else {
+                    alert("Failed to update assignment.");
+                }
+            } catch (error) {
+                console.error("Error updating assignment:", error);
+                alert("Server error while updating.");
+            }
+        }
+        
+        // --- STUDENT LOGIC ---
+
+        function updateStudentView() { 
+            const currentStudent = users.find(u => u.role === 'student'); 
+            if (currentStudent) { 
+                document.getElementById('studentName').textContent = currentStudent.name; 
+                document.getElementById('studentId').textContent = `ID: STU...${currentStudent.id.slice(-4)}`; 
+                document.getElementById('atsScore').textContent = currentStudent.atsScore || '--'; 
+            }
+            updateStudentProgress(); 
+            const assignmentsHtml = assignments.map(assignment => `
+                <div class="bg-white p-4 rounded border">
+                    <h4 class="font-semibold">${assignment.title}</h4>
+                    <p class="text-sm text-gray-600 mt-1">${assignment.description}</p>
+                    <p class="text-xs text-gray-500 mt-2">Due: ${assignment.dueDate}</p>
+                    <div class="mt-3 space-y-3">
+                        <div>
+                            <label for="file-upload-${assignment.id}" class="block text-sm font-medium text-gray-700 mb-2">
+                                Upload your assignment (PDF, Word, PowerPoint, etc.)
+                            </label>
+                            <input 
+                                type="file" 
+                                id="file-upload-${assignment.id}" 
+                                accept=".pdf,.doc,.docx,.ppt,.pptx,.txt,.zip,.rar"
+                                class="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+                                title="Select your assignment file to upload"
+                            >
+                        </div>
+                        <div>
+                            <label for="submission-notes-${assignment.id}" class="block text-sm font-medium text-gray-700 mb-2">
+                                Additional Notes (Optional)
+                            </label>
+                            <textarea 
+                                id="submission-notes-${assignment.id}" 
+                                placeholder="Add any additional notes or comments about your submission..." 
+                                class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 h-16 text-sm"
+                            ></textarea>
+                        </div>
+                        <button 
+                            onclick="submitAssignment('${assignment.id}')" 
+                            class="w-full px-4 py-2 bg-blue-500 text-white text-sm rounded-lg hover:bg-blue-600 disabled:bg-gray-400 disabled:cursor-not-allowed" 
+                            id="submit-btn-${assignment.id}"
+                        >
+                            Submit Assignment
+                        </button>
+                        <div id="upload-status-${assignment.id}" class="hidden text-sm"></div>
+                    </div>
+                </div>
+            `).join(''); 
+            document.getElementById('studentAssignments').innerHTML = assignmentsHtml || '<p class="text-gray-500">No assignments available.</p>'; 
+        }
+
+        async function updateStudentProgress() {
+            const currentStudent = users.find(u => u.role === 'student');
+            if (!currentStudent) return;
+
+            try {
+                // Fetch student submissions from the backend
+                const response = await fetch(`${API_URL}/student/${currentStudent.id}/submissions`);
+                let submissions = [];
+                
+                if (response.ok) {
+                    submissions = await response.json();
+                }
+
+                // Calculate statistics
+                const totalAssignments = assignments.length;
+                const submittedCount = submissions.length;
+                const pendingCount = totalAssignments - submittedCount;
+                const completionRate = totalAssignments > 0 ? Math.round((submittedCount / totalAssignments) * 100) : 0;
+
+                // Update statistics
+                document.getElementById('totalAssignmentsCount').textContent = totalAssignments;
+                document.getElementById('submittedAssignmentsCount').textContent = submittedCount;
+                document.getElementById('pendingAssignmentsCount').textContent = pendingCount;
+                document.getElementById('completionRate').textContent = completionRate + '%';
+                document.getElementById('completionBar').style.width = completionRate + '%';
+
+                // Update performance metrics
+                const atsScore = currentStudent.atsScore || 0;
+                const interviewScore = currentStudent.interviewScore || 0;
+                document.getElementById('progressAtsScore').textContent = atsScore || '--';
+                document.getElementById('progressInterviewScore').textContent = interviewScore || '--';
+                document.getElementById('atsScoreBar').style.width = atsScore + '%';
+                document.getElementById('interviewScoreBar').style.width = interviewScore + '%';
+
+                // Create submission status list
+                const submissionMap = {};
+                submissions.forEach(sub => {
+                    submissionMap[sub.assignment_id] = sub;
+                });
+
+                const statusHtml = assignments.map(assignment => {
+                    const submission = submissionMap[assignment.id];
+                    const isSubmitted = !!submission;
+                    const statusClass = isSubmitted ? 'bg-green-50 border-green-200' : 'bg-orange-50 border-orange-200';
+                    const statusIcon = isSubmitted ? '✅' : '⏳';
+                    const statusText = isSubmitted ? 'Submitted' : 'Pending';
+                    const statusColor = isSubmitted ? 'text-green-700' : 'text-orange-700';
+                    
+                    return `
+                        <div class="${statusClass} p-4 rounded-lg border transition-all hover:shadow-md">
+                            <div class="flex items-start justify-between">
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2 mb-1">
+                                        <span class="text-xl">${statusIcon}</span>
+                                        <h5 class="font-semibold text-gray-800">${assignment.title}</h5>
+                                    </div>
+                                    <p class="text-sm text-gray-600 mb-2">${assignment.description}</p>
+                                    <div class="flex items-center gap-4 text-xs text-gray-500">
+                                        <span>📅 Due: ${assignment.dueDate}</span>
+                                        ${isSubmitted ? `<span>📤 Submitted: ${new Date(submission.submitted_at).toLocaleDateString()}</span>` : ''}
+                                    </div>
+                                    ${isSubmitted && submission.filename ? `
+                                        <div class="mt-2 text-xs text-gray-600">
+                                            <span class="font-medium">File:</span> ${submission.filename}
+                                        </div>
+                                    ` : ''}
+                                    ${isSubmitted && submission.notes ? `
+                                        <div class="mt-2 text-xs text-gray-600">
+                                            <span class="font-medium">Notes:</span> ${submission.notes}
+                                        </div>
+                                    ` : ''}
+                                </div>
+                                <div class="ml-4">
+                                    <span class="${statusColor} font-semibold text-sm px-3 py-1 rounded-full ${isSubmitted ? 'bg-green-100' : 'bg-orange-100'}">
+                                        ${statusText}
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+
+                document.getElementById('submissionStatusList').innerHTML = statusHtml || '<p class="text-gray-500 text-center py-8">No assignments available.</p>';
+
+            } catch (error) {
+                console.error('Error fetching student progress:', error);
+                document.getElementById('submissionStatusList').innerHTML = '<p class="text-red-500 text-center py-8">Failed to load progress data.</p>';
+            }
+        }
+
+        async function submitAssignment(assignmentId) {
+            const fileInput = document.getElementById(`file-upload-${assignmentId}`);
+            const notesTextarea = document.getElementById(`submission-notes-${assignmentId}`);
+            const submitButton = document.getElementById(`submit-btn-${assignmentId}`);
+            const statusDiv = document.getElementById(`upload-status-${assignmentId}`);
+            
+            if (!fileInput.files || fileInput.files.length === 0) {
+                statusDiv.className = 'text-sm text-red-600 mt-2';
+                statusDiv.textContent = 'Please select a file to upload.';
+                statusDiv.classList.remove('hidden');
+                return;
+            }
+            
+            const file = fileInput.files[0];
+            const maxSize = 10 * 1024 * 1024;
+            
+            if (file.size > maxSize) {
+                statusDiv.className = 'text-sm text-red-600 mt-2';
+                statusDiv.textContent = 'File size must be less than 10MB.';
+                statusDiv.classList.remove('hidden');
+                return;
+            }
+            
+            const allowedTypes = ['.pdf', '.doc', '.docx', '.ppt', '.pptx', '.txt', '.zip', '.rar'];
+            const fileExtension = '.' + file.name.split('.').pop().toLowerCase();
+            if (!allowedTypes.includes(fileExtension)) {
+                statusDiv.className = 'text-sm text-red-600 mt-2';
+                statusDiv.textContent = 'Please select a valid file type (PDF, Word, PowerPoint, etc.).';
+                statusDiv.classList.remove('hidden');
+                return;
+            }
+            
+            const currentStudent = users.find(u => u.role === 'student');
+            if (!currentStudent) {
+                statusDiv.className = 'text-sm text-red-600 mt-2';
+                statusDiv.textContent = 'Student profile not found.';
+                statusDiv.classList.remove('hidden');
+                return;
+            }
+            
+            try {
+                submitButton.disabled = true;
+                submitButton.textContent = 'Uploading...';
+                statusDiv.className = 'text-sm text-blue-600 mt-2';
+                statusDiv.textContent = `Uploading ${file.name}... Please wait.`;
+                statusDiv.classList.remove('hidden');
+                
+                const formData = new FormData();
+                formData.append('assignment_file', file);
+                formData.append('student_id', currentStudent.id);
+                formData.append('assignment_id', assignmentId);
+                
+                const notes = notesTextarea.value.trim();
+                if (notes) {
+                    formData.append('notes', notes);
+                }
+                
+                const response = await fetch(`${API_URL}/student/assignments/${assignmentId}/submit`, {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    let errorMessage;
+                    try {
+                        const errorJson = JSON.parse(errorText);
+                        errorMessage = errorJson.error || 'Unknown server error';
+                    } catch {
+                        errorMessage = `Server returned ${response.status}: ${response.statusText}`;
+                    }
+                    throw new Error(errorMessage);
+                }
+                
+                const result = await response.json();
+                
+                statusDiv.className = 'text-sm text-green-600 mt-2';
+                statusDiv.textContent = `✓ Assignment submitted successfully! File: ${file.name}`;
+                
+                submitButton.textContent = 'Submitted ✓';
+                submitButton.classList.remove('bg-blue-500', 'hover:bg-blue-600');
+                submitButton.classList.add('bg-green-500');
+                
+                fileInput.disabled = true;
+                notesTextarea.disabled = true;
+                
+                alert(`Assignment submitted successfully!\nFile: ${file.name}\nSize: ${(file.size / 1024 / 1024).toFixed(2)} MB`);
+                
+                // Refresh all data to update both student and teacher views
+                await fetchAllData();
+                await updateStudentProgress();
+                updateStudentView();
+                
+            } catch (error) {
+                console.error('Error submitting assignment:', error);
+                
+                statusDiv.className = 'text-sm text-red-600 mt-2';
+                statusDiv.textContent = `❌ Failed to submit: ${error.message}`;
+                
+                submitButton.disabled = false;
+                submitButton.textContent = 'Submit Assignment';
+                
+                alert(`Failed to submit assignment: ${error.message}`);
+            }
+        }
+        
+        async function analyzeResume() { const fileInput = document.getElementById('resumeUpload'); if (fileInput.files.length === 0) return alert('Please select a resume file to upload.'); const file = fileInput.files[0]; const formData = new FormData(); formData.append('resume', file); const currentStudent = users.find(u => u.role === 'student'); if (!currentStudent) return alert('No student profile found to upload resume for.'); const analyzeButton = document.querySelector('button[onclick="analyzeResume()"]'); const resultsDiv = document.getElementById('atsResults'); const scoreDiv = document.getElementById('atsScore'); try { analyzeButton.disabled = true; analyzeButton.textContent = 'Analyzing...'; document.getElementById('resumeAnalysis').classList.remove('hidden'); resultsDiv.innerHTML = '<p class="text-gray-600">Analyzing... This may take a moment.</p>'; scoreDiv.textContent = '--'; const response = await fetch(`${API_URL}/student/${currentStudent.id}/upload_resume`, { method: 'POST', body: formData }); const result = await response.json(); if (!response.ok) throw new Error(result.error || 'Failed to analyze resume.'); const score = result.match_score || result.score || result.overall_score; scoreDiv.textContent = score !== undefined ? score : 'N/A'; let formattedResults = `<div class="space-y-3 text-sm"><div><h5 class="font-semibold text-gray-800">Summary:</h5><p class="text-gray-700">${result.summary || 'No summary available.'}</p></div><div><h5 class="font-semibold text-green-700">Matching Skills:</h5><ul class="list-disc list-inside text-green-600">${(result.matching_keywords || []).map(k => `<li>${k}</li>`).join('')}</ul></div><div><h5 class="font-semibold text-red-700">Missing Skills:</h5><ul class="list-disc list-inside text-red-600">${(result.missing_keywords || []).map(k => `<li>${k}</li>`).join('')}</ul></div></div>`; resultsDiv.innerHTML = formattedResults; await fetchAllData(); updateStudentView(); } catch (error) { console.error('Error during resume analysis:', error); resultsDiv.innerHTML = `<p class="text-red-500">Analysis failed: ${error.message}</p>`; } finally { analyzeButton.disabled = false; analyzeButton.textContent = 'Analyze Resume'; } }
+        
+        // --- INTERVIEW LOGIC ---
+
+        let interviewQuestions = [];
+        let userAnswers = [];
+        let currentQuestionIndex = 0;
+        let isVoiceInterview = false;
+        let finalTranscript = '';
+        let microphonePermissionGranted = false;
+        let selectedDuration = 20; // Default 20 minutes
+        let timerInterval = null;
+        let timeRemaining = 0;
+
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        let recognition;
+
+        function selectDuration(minutes) {
+            selectedDuration = minutes;
+            // Update UI to show selected button
+            document.querySelectorAll('.duration-btn').forEach(btn => {
+                btn.classList.remove('border-purple-500', 'ring-2', 'ring-purple-300');
+                btn.classList.add('border-purple-200');
+            });
+            const selectedBtn = document.getElementById(`duration-${minutes}`);
+            selectedBtn.classList.remove('border-purple-200');
+            selectedBtn.classList.add('border-purple-500', 'ring-2', 'ring-purple-300');
+        }
+
+        function startTimer() {
+            timeRemaining = selectedDuration * 60; // Convert to seconds
+            updateTimerDisplay();
+            
+            timerInterval = setInterval(() => {
+                timeRemaining--;
+                updateTimerDisplay();
+                
+                if (timeRemaining <= 0) {
+                    clearInterval(timerInterval);
+                    alert('⏰ Time\'s up! Your interview has ended. We\'ll now evaluate your answers.');
+                    finishAndEvaluateInterview();
+                }
+            }, 1000);
+        }
+
+        function updateTimerDisplay() {
+            const minutes = Math.floor(timeRemaining / 60);
+            const seconds = timeRemaining % 60;
+            const timerElement = document.getElementById('interviewTimer');
+            if (timerElement) {
+                timerElement.textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+                
+                // Change color when time is running low (last 3 minutes)
+                if (timeRemaining <= 180) {
+                    timerElement.classList.add('text-red-600');
+                    timerElement.classList.remove('text-purple-700');
+                } else {
+                    timerElement.classList.add('text-purple-700');
+                    timerElement.classList.remove('text-red-600');
+                }
+            }
+        }
+
+        function stopTimer() {
+            if (timerInterval) {
+                clearInterval(timerInterval);
+                timerInterval = null;
+            }
+        }
+
+        function speak(text, onEndCallback) {
+            if (!('speechSynthesis' in window)) {
+                console.warn("Browser does not support text-to-speech.");
+                if (onEndCallback) onEndCallback();
+                return;
+            }
+            
+            window.speechSynthesis.cancel();
+            
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.lang = 'en-US';
+            utterance.rate = 0.9;
+            
+            utterance.onend = () => {
+                if (onEndCallback) {
+                    onEndCallback();
+                }
+            };
+            
+            utterance.onerror = (event) => {
+                console.error('SpeechSynthesis Error:', event.error);
+                if (onEndCallback) onEndCallback();
+            };
+
+            window.speechSynthesis.speak(utterance);
+        }
+
+        async function requestMicrophonePermission() {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                alert('🎤 Microphone access is not available. Please use a secure (HTTPS) connection.');
+                microphonePermissionGranted = false;
+                return false;
+            }
+
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                stream.getTracks().forEach(track => track.stop());
+                microphonePermissionGranted = true;
+                return true;
+            } catch (error) {
+                console.error('Microphone permission error:', error);
+                microphonePermissionGranted = false;
+                alert(`🎤 Could not access microphone: ${error.message}. Please enable microphone permissions in your browser settings.`);
+                return false;
+            }
+        }
+
+        function initializeSpeechRecognition() {
+            if (!SpeechRecognition) return false;
+            
+            recognition = new SpeechRecognition();
+            recognition.continuous = true;
+            recognition.interimResults = true;
+            recognition.lang = 'en-US';
+
+            recognition.onresult = (event) => {
+                let interimTranscript = '';
+                finalTranscript = '';
+                for (let i = 0; i < event.results.length; i++) {
+                    const transcript = event.results[i][0].transcript;
+                    if (event.results[i].isFinal) {
+                        finalTranscript += transcript + ' ';
+                    } else {
+                        interimTranscript += transcript;
+                    }
+                }
+                const transcriptPreview = document.getElementById('transcriptPreview');
+                if (transcriptPreview) {
+                    transcriptPreview.textContent = finalTranscript + interimTranscript || 'Listening...';
+                }
+            };
+
+            recognition.onstart = () => {
+                const statusDiv = document.getElementById('status-section');
+                if (statusDiv) statusDiv.innerHTML = '<span class="text-green-600">🎤 Recording... Speak now!</span>';
+            };
+
+            recognition.onend = () => {
+                const recordBtn = document.getElementById('recordBtn');
+                if (recordBtn && recordBtn.disabled) {
+                    const answer = finalTranscript.trim();
+                    submitAnswer(answer || "(No answer recorded)");
+                }
+            };
+            
+            recognition.onerror = (event) => {
+                console.error('SpeechRecognition Error:', event.error);
+                const statusDiv = document.getElementById('status-section');
+                if (statusDiv) statusDiv.innerHTML = `<span class="text-red-500">❌ Speech recognition error: ${event.error}</span>`;
+            };
+
+            return true;
+        }
+
+        async function startInterview(mode) {
+            isVoiceInterview = (mode === 'voice');
+            
+            if (isVoiceInterview) {
+                if (!SpeechRecognition || !('speechSynthesis' in window)) {
+                    return alert("❌ Your browser doesn't support the required voice features (Speech Recognition or Text-to-Speech). Please try the text interview or use a different browser like Chrome or Edge.");
+                }
+                
+                const startBtn = document.getElementById('startVoiceInterviewBtn');
+                startBtn.disabled = true;
+                startBtn.innerHTML = '<span>🎤</span> <span>Checking Mic...</span>';
+                
+                const hasPermission = await requestMicrophonePermission();
+                if (!hasPermission) {
+                    startBtn.disabled = false;
+                    startBtn.innerHTML = '<span>🎙️</span> <span>Start Voice Interview</span>';
+                    return;
+                }
+                
+                if (!initializeSpeechRecognition()) {
+                    alert("❌ Failed to initialize speech recognition.");
+                    startBtn.disabled = false;
+                    startBtn.innerHTML = '<span>🎙️</span> <span>Start Voice Interview</span>';
+                    return;
+                }
+                
+                startBtn.disabled = false;
+                startBtn.innerHTML = '<span>🎙️</span> <span>Start Voice Interview</span>';
+            }
+
+            const currentStudent = users.find(u => u.role === 'student');
+            if (!currentStudent || !currentStudent.resume_filename) {
+                return alert('You must upload and analyze a resume before starting the interview.');
+            }
+            
+            openInterviewModal('<p class="text-gray-600 text-center">🤖 Generating personalized questions based on your resume...</p>');
+
+            try {
+                const response = await fetch(`${API_URL}/interview/start`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ user_id: currentStudent.id, difficulty: 'easy' })
+                });
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.error);
+
+                interviewQuestions = data.questions;
+                userAnswers = [];
+                currentQuestionIndex = 0;
+                displayNextQuestion();
+            } catch (error) {
+                console.error('Error starting interview:', error);
+                updateInterviewModal(`<p class="text-red-500 text-center">Error starting interview: ${error.message}</p><button onclick="closeInterviewModal()" class="mt-4 w-full px-4 py-2 bg-gray-300 rounded-lg">Close</button>`);
+            }
+        }
+        
+        function displayNextQuestion() {
+            if (currentQuestionIndex < interviewQuestions.length) {
+                // Start timer on first question
+                if (currentQuestionIndex === 0) {
+                    const timerDisplay = document.getElementById('timerDisplay');
+                    if (timerDisplay) {
+                        timerDisplay.classList.remove('hidden');
+                    }
+                    startTimer();
+                }
+                
+                const question = interviewQuestions[currentQuestionIndex];
+                let content = `
+                    <div class="space-y-6">
+                        <div class="text-center mb-6">
+                            <div class="inline-flex items-center px-4 py-2 bg-blue-100 text-blue-800 rounded-full text-sm font-semibold mb-4">
+                                Question ${currentQuestionIndex + 1} of ${interviewQuestions.length}
+                            </div>
+                            <div class="bg-gradient-to-r from-blue-50 to-indigo-50 p-6 rounded-xl border-l-4 border-blue-500">
+                                <p class="text-gray-800 text-lg font-medium leading-relaxed">"${question}"</p>
+                            </div>
+                        </div>
+                        <div id="answer-section" class="min-h-[200px]"></div>
+                        <div id="status-section" class="text-center text-gray-500 min-h-[3rem] flex items-center justify-center bg-gray-50 rounded-lg p-4">
+                            <span class="text-sm">Preparing...</span>
+                        </div>
+                    </div>
+                `;
+                updateInterviewModal(content);
+
+                if (isVoiceInterview) {
+                    document.getElementById('answer-section').innerHTML = `
+                        <div class="space-y-6">
+                            <div class="text-center">
+                                <button id="recordBtn" onclick="toggleRecording()" class="px-8 py-4 bg-blue-500 hover:bg-blue-600 text-white rounded-full text-lg font-semibold disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center mx-auto transition-all shadow-lg min-w-[200px]" disabled>
+                                    <span id="recordIcon" class="mr-3 text-2xl">🎙️</span>
+                                    <span id="recordText">Record Answer</span>
+                                </button>
+                            </div>
+                            <div class="bg-gray-50 p-4 rounded-lg border">
+                                <div class="flex items-center mb-2"><span class="text-sm font-medium text-gray-700 mr-2">📝 Your transcript:</span><div class="flex-1 h-px bg-gray-200"></div></div>
+                                <div class="bg-white p-3 rounded border min-h-[4rem] max-h-[120px] overflow-y-auto">
+                                    <p id="transcriptPreview" class="text-gray-600 italic text-sm leading-relaxed">Waiting for you to speak...</p>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                    
+                    const statusDiv = document.getElementById('status-section');
+                    statusDiv.innerHTML = '<span class="text-blue-600 flex items-center justify-center"><span class="animate-pulse mr-2">🔊</span> AI is reading the question aloud...</span>';
+                    
+                    speak(question, () => {
+                        const recordBtn = document.getElementById('recordBtn');
+                        if (recordBtn) recordBtn.disabled = false;
+                        if (statusDiv) statusDiv.innerHTML = '<span class="text-green-600 flex items-center justify-center"><span class="mr-2">✅</span> Ready! Click the record button to answer.</span>';
+                    });
+
+                } else {
+                    document.getElementById('answer-section').innerHTML = `
+                        <div class="space-y-4">
+                            <div class="bg-gradient-to-r from-purple-50 to-indigo-50 p-4 rounded-lg border-l-4 border-purple-500">
+                                <label for="interviewAnswer" class="block text-sm font-medium text-purple-800 mb-2">✍️ Type your detailed answer below:</label>
+                                <textarea id="interviewAnswer" placeholder="Share your thoughts, experiences, and insights here..." class="w-full px-4 py-3 border-2 border-gray-200 rounded-lg h-32 focus:border-purple-500 focus:outline-none resize-none text-gray-700 leading-relaxed"></textarea>
+                            </div>
+                            <div class="flex flex-col sm:flex-row gap-3">
+                                <button onclick="submitTextAnswer()" class="flex-1 px-6 py-3 bg-purple-500 hover:bg-purple-600 text-white rounded-lg font-semibold transition-all flex items-center justify-center"><span class="mr-2">📤</span> Submit Answer</button>
+                                <button onclick="skipQuestion()" class="px-4 py-3 bg-gray-300 hover:bg-gray-400 text-gray-700 rounded-lg font-medium transition-all">Skip Question</button>
+                            </div>
+                        </div>
+                    `;
+                     document.getElementById('status-section').innerHTML = '<span class="text-blue-600">Please type your answer above and click "Submit Answer".</span>';
+                }
+            } else {
+                finishAndEvaluateInterview();
+            }
+        }
+        
+        function submitTextAnswer() {
+            const answerTextarea = document.getElementById('interviewAnswer');
+            const answer = answerTextarea.value.trim();
+            submitAnswer(answer || "(No answer provided)");
+        }
+
+        function submitAnswer(answer) {
+            if (recognition) {
+                recognition.stop();
+            }
+            userAnswers.push({
+                question: interviewQuestions[currentQuestionIndex],
+                answer: answer
+            });
+            currentQuestionIndex++;
+            displayNextQuestion();
+        }
+
+        async function finishAndEvaluateInterview() {
+            stopTimer(); // Stop the timer when evaluation begins
+            const timerDisplay = document.getElementById('timerDisplay');
+            if (timerDisplay) {
+                timerDisplay.classList.add('hidden');
+            }
+            
+            updateInterviewModal(`<div class="text-center py-12 space-y-6"><div class="flex justify-center"><div class="animate-spin rounded-full h-16 w-16 border-b-4 border-blue-500"></div></div><div class="space-y-2"><h4 class="text-xl font-semibold text-gray-800">🤖 Evaluating Your Performance</h4><p class="text-gray-600 max-w-md mx-auto leading-relaxed">Our HR team is analyzing your responses. This may take a moment...</p></div></div>`);
+            const currentStudent = users.find(u => u.role === 'student');
+            try {
+                const response = await fetch(`${API_URL}/interview/evaluate`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ user_id: currentStudent.id, transcript: userAnswers })
+                });
+                const result = await response.json();
+                if (!response.ok) throw new Error(result.error);
+                
+                const feedbackHTML = `
+                <div class="space-y-6">
+                    <!-- Score Section -->
+                    <div class="text-center bg-gradient-to-r from-green-50 to-emerald-50 p-8 rounded-xl border-l-4 border-green-500">
+                        <div class="space-y-4">
+                            <h4 class="font-bold text-3xl text-green-800 flex items-center justify-center">
+                                <span class="mr-3">🎉</span> Interview Complete!
+                            </h4>
+                            <div class="bg-white rounded-lg p-6 inline-block shadow-sm">
+                                <p class="text-lg text-gray-600 mb-2">Your Final Score</p>
+                                <div class="flex items-baseline justify-center">
+                                    <span class="text-6xl font-bold text-green-600">${result.score}</span>
+                                    <span class="text-2xl text-gray-500 ml-1">/100</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- HR Feedback -->
+                    <div class="bg-blue-50 p-6 rounded-xl border-l-4 border-blue-500">
+                        <h5 class="font-bold text-xl text-blue-800 mb-4 flex items-center">
+                            <span class="mr-2">💬</span> HR Feedback
+                        </h5>
+                        <div class="bg-white p-5 rounded-lg shadow-sm">
+                            <p class="text-gray-700 leading-relaxed text-base">${result.feedback}</p>
+                        </div>
+                    </div>
+                    
+                    <!-- Strengths -->
+                    ${result.strengths && result.strengths.length > 0 ? `
+                    <div class="bg-green-50 p-6 rounded-xl border-l-4 border-green-500">
+                        <h5 class="font-bold text-xl text-green-800 mb-4 flex items-center">
+                            <span class="mr-2">✨</span> Your Strengths
+                        </h5>
+                        <div class="bg-white p-4 rounded-lg shadow-sm">
+                            <ul class="space-y-3">
+                                ${result.strengths.map(strength => `
+                                    <li class="flex items-start">
+                                        <span class="text-green-500 mr-3 mt-1 text-xl">✓</span>
+                                        <span class="text-green-700 leading-relaxed">${strength}</span>
+                                    </li>
+                                `).join('')}
+                            </ul>
+                        </div>
+                    </div>
+                    ` : ''}
+                    
+                    <!-- Areas for Growth -->
+                    ${result.mistakes && result.mistakes.length > 0 ? `
+                    <div class="bg-orange-50 p-6 rounded-xl border-l-4 border-orange-500">
+                        <h5 class="font-bold text-xl text-orange-800 mb-4 flex items-center">
+                            <span class="mr-2">🎯</span> Areas for Growth
+                        </h5>
+                        <div class="bg-white p-4 rounded-lg shadow-sm">
+                            <ul class="space-y-3">
+                                ${result.mistakes.map(mistake => `
+                                    <li class="flex items-start">
+                                        <span class="text-orange-500 mr-3 mt-1">💡</span>
+                                        <span class="text-orange-700 leading-relaxed">${mistake}</span>
+                                    </li>
+                                `).join('')}
+                            </ul>
+                        </div>
+                    </div>
+                    ` : ''}
+                    
+                    <!-- Close Button -->
+                    <div class="text-center pt-4">
+                        <button onclick="closeInterviewModal()" class="px-8 py-3 bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg font-semibold transition-all shadow-md">
+                            <span class="mr-2">✨</span> Close Interview
+                        </button>
+                    </div>
+                </div>`;
+                
+                updateInterviewModal(feedbackHTML);
+                await fetchAllData(); 
+            } catch (error) {
+                console.error('Error evaluating interview:', error);
+                updateInterviewModal(`<div class="text-center space-y-6 py-8"><div class="text-red-500 text-6xl">❌</div><div class="space-y-2"><h4 class="text-xl font-semibold text-red-600">Evaluation Error</h4><p class="text-gray-600 max-w-md mx-auto leading-relaxed">${error.message}</p></div><button onclick="closeInterviewModal()" class="px-6 py-3 bg-gray-500 hover:bg-gray-600 text-white rounded-lg font-semibold transition-all">Close</button></div>`);
+            }
+        }
+        
+        function toggleRecording() {
+            const recordBtn = document.getElementById('recordBtn');
+            const recordIcon = document.getElementById('recordIcon');
+            const recordText = document.getElementById('recordText');
+            if (recordBtn.classList.contains('is-recording')) {
+                recognition.stop();
+                recordBtn.disabled = true;
+                recordText.textContent = 'Processing...';
+                recordIcon.textContent = '🧠';
+            } else {
+                finalTranscript = '';
+                recognition.start();
+                recordBtn.classList.add('is-recording', 'bg-red-500', 'hover:bg-red-600');
+                recordBtn.classList.remove('bg-blue-500', 'hover:bg-blue-600');
+                recordText.textContent = 'Stop Recording';
+                recordIcon.textContent = '⏹️';
+            }
+        }
+
+        function skipQuestion() {
+            if (confirm('Are you sure you want to skip this question?')) {
+                submitAnswer("(Question skipped)");
+            }
+        }
+
+        function openInterviewModal(content) {
+            const modal = document.getElementById('interviewModal');
+            updateInterviewModal(content);
+            modal.classList.remove('hidden');
+            document.body.style.overflow = 'hidden';
+        }
+
+        function updateInterviewModal(content) {
+            document.getElementById('interviewModalContent').innerHTML = content;
+        }
+
+        function closeInterviewModal() {
+            if (window.speechSynthesis && window.speechSynthesis.speaking) {
+                window.speechSynthesis.cancel();
+            }
+            if (recognition) recognition.abort();
+            finalTranscript = '';
+            microphonePermissionGranted = false;
+            stopTimer(); // Stop the timer when closing
+            const timerDisplay = document.getElementById('timerDisplay');
+            if (timerDisplay) {
+                timerDisplay.classList.add('hidden');
+            }
+            document.getElementById('interviewModal').classList.add('hidden');
+            document.body.style.overflow = '';
+        }
+
+        // Student Progress Modal for Admin
+        async function viewStudentProgress(studentId) {
+            const student = users.find(u => u.id === studentId);
+            if (!student) {
+                alert('Student not found');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_URL}/student/${studentId}/submissions`);
+                const submissions = await response.json();
+
+                // Get all assignments
+                const assignmentsResponse = await fetch(`${API_URL}/teacher/assignments`);
+                const allAssignments = await assignmentsResponse.json();
+
+                const totalAssignments = allAssignments.length;
+                const completedAssignments = submissions.filter(s => s.status === 'Submitted').length;
+                const pendingAssignments = totalAssignments - completedAssignments;
+                const completionRate = totalAssignments > 0 ? Math.round((completedAssignments / totalAssignments) * 100) : 0;
+
+                // Update modal header with student name
+                document.getElementById('studentProgressModal').querySelector('h3').textContent = `📊 ${student.name}'s Progress Dashboard`;
+
+                // Build the content with enhanced visualizations
+                let content = `
+                    <!-- Student Info Card -->
+                    <div class="bg-gradient-to-r from-indigo-500 to-purple-600 text-white p-6 rounded-xl mb-6 shadow-lg">
+                        <div class="flex items-center gap-4">
+                            <div class="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center text-3xl">
+                                👨‍🎓
+                            </div>
+                            <div class="flex-1">
+                                <h4 class="text-2xl font-bold">${student.name}</h4>
+                                <p class="text-indigo-100">Student ID: ${student.id.slice(-8)}</p>
+                            </div>
+                            <div class="text-right">
+                                <div class="text-sm text-indigo-100">Overall Progress</div>
+                                <div class="text-4xl font-bold">${completionRate}%</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Stats Cards -->
+                    <div class="mb-6 grid grid-cols-1 md:grid-cols-4 gap-4">
+                        <div class="bg-blue-50 p-5 rounded-xl border-l-4 border-blue-500 hover:shadow-md transition-shadow">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <p class="text-sm text-gray-600 mb-1">Total Assignments</p>
+                                    <p class="text-3xl font-bold text-blue-600">${totalAssignments}</p>
+                                </div>
+                                <div class="text-4xl">📚</div>
+                            </div>
+                        </div>
+                        <div class="bg-green-50 p-5 rounded-xl border-l-4 border-green-500 hover:shadow-md transition-shadow">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <p class="text-sm text-gray-600 mb-1">Completed</p>
+                                    <p class="text-3xl font-bold text-green-600">${completedAssignments}</p>
+                                </div>
+                                <div class="text-4xl">✅</div>
+                            </div>
+                        </div>
+                        <div class="bg-orange-50 p-5 rounded-xl border-l-4 border-orange-500 hover:shadow-md transition-shadow">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <p class="text-sm text-gray-600 mb-1">Pending</p>
+                                    <p class="text-3xl font-bold text-orange-600">${pendingAssignments}</p>
+                                </div>
+                                <div class="text-4xl">⏳</div>
+                            </div>
+                        </div>
+                        <div class="bg-purple-50 p-5 rounded-xl border-l-4 border-purple-500 hover:shadow-md transition-shadow">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <p class="text-sm text-gray-600 mb-1">ATS Score</p>
+                                    <p class="text-3xl font-bold text-purple-600">${student.atsScore || 'N/A'}</p>
+                                </div>
+                                <div class="text-4xl">📊</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Progress Visualization -->
+                    <div class="bg-white border rounded-xl p-6 mb-6 shadow-sm">
+                        <h5 class="font-semibold text-gray-800 mb-4 flex items-center">
+                            <span class="text-2xl mr-2">📈</span> Completion Progress
+                        </h5>
+                        <div class="relative">
+                            <div class="w-full bg-gray-200 rounded-full h-8 overflow-hidden">
+                                <div class="bg-gradient-to-r from-green-400 via-blue-500 to-purple-600 h-8 rounded-full transition-all duration-500 flex items-center justify-end pr-3" style="width: ${completionRate}%">
+                                    <span class="text-white font-bold text-sm">${completionRate}%</span>
+                                </div>
+                            </div>
+                            <div class="flex justify-between mt-2 text-xs text-gray-500">
+                                <span>0%</span>
+                                <span>25%</span>
+                                <span>50%</span>
+                                <span>75%</span>
+                                <span>100%</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Performance Metrics -->
+                    <div class="grid grid-cols-2 gap-4 mb-6">
+                        <div class="bg-gradient-to-br from-blue-50 to-cyan-50 p-5 rounded-xl border border-blue-100">
+                            <div class="text-sm text-gray-600 mb-2">📝 Interview Score</div>
+                            <div class="text-3xl font-bold text-blue-600">${student.interviewScore || 'Not taken'}</div>
+                            <div class="mt-3 w-full bg-gray-200 rounded-full h-2">
+                                <div class="bg-blue-500 h-2 rounded-full" style="width: ${student.interviewScore || 0}%"></div>
+                            </div>
+                        </div>
+                        <div class="bg-gradient-to-br from-purple-50 to-pink-50 p-5 rounded-xl border border-purple-100">
+                            <div class="text-sm text-gray-600 mb-2">🎯 Resume ATS Score</div>
+                            <div class="text-3xl font-bold text-purple-600">${student.atsScore || 'Not analyzed'}</div>
+                            <div class="mt-3 w-full bg-gray-200 rounded-full h-2">
+                                <div class="bg-purple-500 h-2 rounded-full" style="width: ${student.atsScore || 0}%"></div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Assignment Submissions Section -->
+                    <div class="space-y-3">
+                        <h4 class="font-semibold text-gray-800 text-lg mb-4 flex items-center">
+                            <span class="text-2xl mr-2">📋</span> Assignment Submissions
+                        </h4>`;
+
+                if (submissions.length === 0) {
+                    content += '<p class="text-gray-500 text-center py-8">No submissions yet.</p>';
+                } else {
+                    submissions.forEach(submission => {
+                        const statusClass = submission.status === 'Submitted' 
+                            ? 'bg-green-100 text-green-800' 
+                            : 'bg-yellow-100 text-yellow-800';
+                        
+                        const submittedDate = submission.submitted_at 
+                            ? new Date(submission.submitted_at).toLocaleDateString() 
+                            : 'N/A';
+
+                        content += `
+                            <div class="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
+                                <div class="flex justify-between items-start mb-2">
+                                    <h5 class="font-semibold text-gray-800">${submission.assignment_title}</h5>
+                                    <span class="px-3 py-1 rounded-full text-xs font-medium ${statusClass}">
+                                        ${submission.status}
+                                    </span>
+                                </div>
+                                <div class="text-sm text-gray-600 space-y-1">
+                                    <p><span class="font-medium">Subject:</span> ${submission.subject || 'N/A'}</p>
+                                    <p><span class="font-medium">Submitted:</span> ${submittedDate}</p>
+                                    ${submission.file_path ? `
+                                        <a href="${BACKEND_URL}/uploads/submissions/${submission.assignment_id}/${submission.file_path.split('/').pop()}" 
+                                           target="_blank" 
+                                           class="inline-block mt-2 px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 text-xs">
+                                            Download Submission
+                                        </a>
+                                    ` : ''}
+                                </div>
+                            </div>
+                        `;
+                    });
+                }
+
+                content += '</div>';
+
+                document.getElementById('studentProgressModalContent').innerHTML = content;
+                document.getElementById('studentProgressModal').classList.remove('hidden');
+                document.body.style.overflow = 'hidden';
+
+            } catch (error) {
+                console.error('Error fetching student progress:', error);
+                alert('Failed to load student progress. Please try again.');
+            }
+        }
+
+        function closeStudentProgressModal() {
+            document.getElementById('studentProgressModal').classList.add('hidden');
+            document.body.style.overflow = '';
+        }
+
+        // --- HR VIEW ---
+
+        function switchHRTab(tabName) {
+            document.querySelectorAll('.hr-tab-content').forEach(el => el.classList.add('hidden'));
+            document.getElementById(`hr-tab-${tabName}`).classList.remove('hidden');
+            
+            document.querySelectorAll('.hr-nav-btn').forEach(btn => {
+                btn.className = 'hr-nav-btn w-full text-left px-4 py-3 rounded-lg font-medium text-gray-600 hover:bg-gray-100 transition-all duration-200 flex items-center';
+            });
+
+            const activeBtn = document.getElementById(`btn-hr-${tabName}`);
+            activeBtn.className = 'hr-nav-btn w-full text-left px-4 py-3 rounded-lg font-medium bg-blue-500 text-white shadow-md transition-all duration-200 flex items-center';
+            
+            // Close mobile sidebar after selection
+            if (window.innerWidth <= 768) {
+                toggleMobileSidebar();
+            }
+        }
+
+        function updateHRView() { 
+            const students = users.filter(u => u.role === 'student'); 
+            const backendUrl = BACKEND_URL; 
+            
+            // Update Student Resumes Tab
+            document.getElementById('studentResumes').innerHTML = students.map(student => { 
+                const hasResume = student.resume_filename; 
+                const resumeLink = hasResume ? `${backendUrl}/resumes/${student.resume_filename}` : '#'; 
+                const buttonClass = hasResume ? 'bg-blue-500 hover:bg-blue-600 text-white' : 'bg-gray-300 text-gray-500 cursor-not-allowed'; 
+                const buttonTag = hasResume 
+                    ? `<a href="${resumeLink}" target="_blank" class="px-4 py-2 text-sm rounded-lg ${buttonClass} inline-flex items-center"><span class="mr-2">📄</span>View Resume</a>` 
+                    : `<button disabled class="px-4 py-2 text-sm rounded-lg ${buttonClass}">No Resume</button>`; 
+                
+                return `
+                    <div class="bg-white p-5 rounded-lg border border-gray-200 hover:shadow-md transition-shadow">
+                        <div class="flex justify-between items-center">
+                            <div class="flex-1">
+                                <h4 class="font-semibold text-gray-800 text-lg mb-1">${student.name}</h4>
+                                <p class="text-sm text-gray-600">ID: ${student.id.slice(-8)}</p>
+                                <p class="text-sm font-medium text-blue-600 mt-2">ATS Score: ${student.atsScore || 'N/A'}/100</p>
+                            </div>
+                            <div>
+                                ${buttonTag}
+                            </div>
+                        </div>
+                    </div>
+                `; 
+            }).join('') || '<p class="text-gray-500 text-center py-8">No candidates available.</p>'; 
+            
+            // Update Interview Performance Tab
+            const interviewedStudents = students.filter(s => s.interviewScore); 
+            document.getElementById('interviewScores').innerHTML = interviewedStudents.map(student => `
+                <div class="bg-white p-5 rounded-lg border border-gray-200 hover:shadow-md transition-shadow">
+                    <div class="flex justify-between items-center">
+                        <div class="flex-1">
+                            <h4 class="font-semibold text-gray-800 text-lg mb-1">${student.name}</h4>
+                            <p class="text-sm text-gray-600 mb-2">Interview Score: <span class="font-bold text-lg">${student.interviewScore}/100</span></p>
+                        </div>
+                        <div class="text-center">
+                            <div class="text-2xl font-bold ${student.interviewScore >= 80 ? 'text-green-600' : student.interviewScore >= 60 ? 'text-yellow-600' : 'text-red-600'}">
+                                ${student.interviewScore >= 80 ? '🌟' : student.interviewScore >= 60 ? '👍' : '📈'}
+                            </div>
+                            <div class="text-xs font-medium ${student.interviewScore >= 80 ? 'text-green-600' : student.interviewScore >= 60 ? 'text-yellow-600' : 'text-red-600'}">
+                                ${student.interviewScore >= 80 ? 'Excellent' : student.interviewScore >= 60 ? 'Good' : 'Needs Improvement'}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `).join('') || '<p class="text-gray-500 text-center py-8">No interview scores available.</p>'; 
+            
+            // Update Analytics Overview Tab
+            const studentsWithATS = users.filter(s => s.role === 'student' && s.atsScore); 
+            const avgATS = studentsWithATS.length > 0 ? Math.round(studentsWithATS.reduce((sum, s) => sum + s.atsScore, 0) / studentsWithATS.length) : 0; 
+            const avgInterview = interviewedStudents.length > 0 ? Math.round(interviewedStudents.reduce((sum, s) => sum + s.interviewScore, 0) / interviewedStudents.length) : 0; 
+            
+            document.getElementById('avgAtsScore').textContent = avgATS; 
+            document.getElementById('avgInterviewScore').textContent = avgInterview; 
+            document.getElementById('totalCandidates').textContent = students.length;
+            
+            // Performance Distribution
+            const excellentCount = interviewedStudents.filter(s => s.interviewScore >= 80).length;
+            const goodCount = interviewedStudents.filter(s => s.interviewScore >= 60 && s.interviewScore < 80).length;
+            const needsImprovementCount = interviewedStudents.filter(s => s.interviewScore < 60).length;
+            
+            const total = interviewedStudents.length || 1;
+            document.getElementById('excellentCount').textContent = excellentCount;
+            document.getElementById('goodCount').textContent = goodCount;
+            document.getElementById('needsImprovementCount').textContent = needsImprovementCount;
+            document.getElementById('excellentBar').style.width = (excellentCount / total * 100) + '%';
+            document.getElementById('goodBar').style.width = (goodCount / total * 100) + '%';
+            document.getElementById('needsImprovementBar').style.width = (needsImprovementCount / total * 100) + '%';
+            
+            // Quick Stats
+            document.getElementById('resumesSubmitted').textContent = students.filter(s => s.resume_filename).length;
+            document.getElementById('interviewsCompleted').textContent = interviewedStudents.length;
+            document.getElementById('pendingEvaluations').textContent = students.filter(s => !s.interviewScore && s.resume_filename).length;
+        }
+        
+        // --- CHATBOT ---
+
+        function toggleChatbot() { document.getElementById('chatbot-window').classList.toggle('hidden'); }
+        function openQuizModal() { document.getElementById('quizModal').classList.remove('hidden'); }
+        function closeQuizModal() { document.getElementById('quizModal').classList.add('hidden'); }
+        function formatChatResponse(text) { let html = text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/^# (.*$)/gim, '<h4 class="font-bold text-lg mb-2 text-indigo-800">$1</h4>').replace(/^## (.*$)/gim, '<h5 class="font-semibold text-md mb-1 text-gray-700">$1</h5>').replace(/\n/g, '<br>'); if (html.includes('<br>* ')) { let listHtml = '<ul class="list-disc list-inside space-y-1 my-2">'; const items = html.split('<br>* '); items.slice(1).forEach(item => { listHtml += `<li>${item.replace(/<br>/g, '')}</li>`; }); listHtml += '</ul>'; html = html.substring(0, html.indexOf('<br>* ')) + listHtml; } return html; }
+        async function sendMessage() { const input = document.getElementById('chatInput'); const userInput = input.value.trim(); if (!userInput) return; const chatMessages = document.getElementById('chatMessages'); chatMessages.innerHTML += `<div class="chat-message mb-2 text-right"><strong>You:</strong> ${userInput}</div>`; input.value = ''; chatMessages.scrollTop = chatMessages.scrollHeight; const thinkingMsgId = `thinking-${Date.now()}`; chatMessages.innerHTML += `<div id="${thinkingMsgId}" class="chat-message mb-2"><strong>AI Assistant:</strong> Thinking...</div>`; chatMessages.scrollTop = chatMessages.scrollHeight; try { const response = await fetch(`${API_URL}/chatbot/general_query`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: userInput }) }); const data = await response.json(); if (!response.ok) throw new Error(data.error || "An unknown error occurred."); const answer = data.answer?.text || data.answer || data.response || "Sorry, I couldn't generate a response."; const formattedAnswer = formatChatResponse(answer); document.getElementById(thinkingMsgId).innerHTML = `<div class="chat-message mb-2"><strong>AI Assistant:</strong><div class="mt-1">${formattedAnswer}</div></div>`; } catch (error) { console.error("Chatbot Error:", error); document.getElementById(thinkingMsgId).innerHTML = `<div class="chat-message mb-2 text-red-500"><strong>AI Assistant:</strong> Sorry, I couldn't process that request. ${error.message}</div>`; } finally { chatMessages.scrollTop = chatMessages.scrollHeight; } }
+        async function startCustomQuiz() { 
+            const topic = document.getElementById('quizTopic').value.trim(); 
+            const numQuestions = document.getElementById('quizNumQuestions').value; 
+            
+            if (!topic || !numQuestions || numQuestions < 1) { 
+                return alert('Please provide a valid topic and number of questions.'); 
+            } 
+            
+            closeQuizModal(); 
+            const chatMessages = document.getElementById('chatMessages'); 
+            chatMessages.innerHTML += `<div class="chat-message mb-2 text-center text-gray-500 italic p-2">Generating a ${numQuestions}-question quiz on "${topic}"...</div>`; 
+            chatMessages.scrollTop = chatMessages.scrollHeight; 
+            
+            const thinkingMsgId = `thinking-quiz-${Date.now()}`; 
+            chatMessages.innerHTML += `<div id="${thinkingMsgId}" class="chat-message mb-2"><strong>AI Assistant:</strong> Preparing your quiz...</div>`; 
+            chatMessages.scrollTop = chatMessages.scrollHeight; 
+            
+            try { 
+                console.log('Requesting quiz with topic:', topic, 'num_questions:', numQuestions);
+                const response = await fetch(`${API_URL}/chatbot/query`, { 
+                    method: 'POST', 
+                    headers: { 'Content-Type': 'application/json' }, 
+                    body: JSON.stringify({ topic, num_questions: parseInt(numQuestions) }) 
+                }); 
+                
+                console.log('Response status:', response.status);
+                const data = await response.json(); 
+                console.log('Response data:', data);
+                
+                if (!response.ok) {
+                    throw new Error(data.error || 'Failed to generate quiz');
+                }
+                
+                if (!data.questions || data.questions.length === 0) {
+                    throw new Error('No questions generated');
+                }
+                
+                document.getElementById(thinkingMsgId).remove(); 
+                displayMCQQuiz(data.questions); 
+            } catch (error) { 
+                console.error("Error fetching custom quiz:", error); 
+                document.getElementById(thinkingMsgId).innerHTML = `<div class="chat-message mb-2 text-red-500"><strong>AI Assistant:</strong> Sorry, I couldn't create that quiz. ${error.message}</div>`; 
+            } 
+        }
+        function displayMCQQuiz(questions) { 
+            console.log('Displaying quiz with questions:', questions);
+            const chatMessages = document.getElementById('chatMessages'); 
+            const quizId = `quiz-${Date.now()}`; 
+            const topic = document.getElementById('quizTopic').value.trim(); 
+            
+            let quizHtml = `<div id="${quizId}" class="chat-message mb-2 p-3 bg-indigo-50 rounded-lg border">`; 
+            quizHtml += `<h4 class="font-bold text-indigo-800 mb-2">Quiz Time: ${topic || 'Topic'}</h4>`; 
+            
+            questions.forEach((q, index) => { 
+                const questionId = `${quizId}-q-${index}`; 
+                quizHtml += `<div id="${questionId}" class="mb-4 text-sm">`; 
+                quizHtml += `<p class="font-semibold text-gray-800">${index + 1}. ${q.question}</p>`; 
+                quizHtml += `<div class="grid grid-cols-2 gap-2 mt-2">`; 
+                
+                q.options.forEach(option => { 
+                    const isCorrect = option === q.correct_answer; 
+                    quizHtml += `<button onclick="checkMCQAnswer(this, ${isCorrect}, '${questionId}')" class="text-left p-2 border rounded-md bg-white hover:bg-gray-100 transition-colors">${option}</button>`; 
+                }); 
+                
+                quizHtml += `</div></div>`; 
+            }); 
+            
+            quizHtml += `</div>`; 
+            chatMessages.innerHTML += quizHtml; 
+            chatMessages.scrollTop = chatMessages.scrollHeight; 
+        }
+        function checkMCQAnswer(button, isCorrect, questionId) { const questionDiv = document.getElementById(questionId); const buttons = questionDiv.querySelectorAll('button'); buttons.forEach(btn => { btn.disabled = true; const isCorrectAnswer = btn.onclick.toString().includes('true'); if (btn === button) { btn.classList.add(isCorrect ? 'bg-green-200' : 'bg-red-200', 'border-gray-400'); } else if (isCorrectAnswer) { btn.classList.add('bg-green-200', 'border-green-400'); } }); }
+
+        document.getElementById('chatInput').addEventListener('keypress', e => e.key === 'Enter' && sendMessage());
+        
+        document.addEventListener('DOMContentLoaded', () => {
+            const urlRole = '{{ role }}';
+            if (urlRole && ['admin', 'teacher', 'student', 'hr'].includes(urlRole)) {
+                showPage(urlRole);
+            } else {
+                showPage('admin');
+            }
+        });
+    </script>
+</body>
+ </html>

@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ProEduvate - Login</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .fade-in { animation: fadeIn 0.3s ease-in; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    </style>
+</head>
+<body class="flex items-center justify-center min-h-screen bg-gradient-to-br from-slate-100 via-blue-50 to-indigo-100">
+    <div class="w-full max-w-md bg-white rounded-xl shadow-lg overflow-hidden fade-in">
+        <div class="p-8 bg-gray-500 text-center">
+            <div class="flex items-center justify-center mb-3">
+                <img src="/static/WhatsApp_Image_2025-12-02_at_14.51.15__1_-removebg-preview.png" alt="ProEduvate Logo" class="h-24 sm:h-28 md:h-32 w-auto">
+            </div>
+            <p class="text-black">Learning Management System</p>
+        </div>
+        
+        <div class="p-8 bg-gray-400">
+            <form id="loginForm">
+                <div class="mb-4">
+                    <label class="block text-gray-700 text-sm font-bold mb-2">Username</label>
+                    <input type="text" id="username" placeholder="Enter your role (admin/teacher/student/hr)" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500" required>
+                </div>
+                
+                <div class="mb-6">
+                    <label class="block text-gray-700 text-sm font-bold mb-2">Password</label>
+                    <input type="password" id="password" placeholder="Enter password" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500" required>
+                </div>
+                
+                <div id="loginError" class="hidden mb-4 text-red-500 text-sm text-center bg-red-50 p-2 rounded">
+                    Invalid username or password
+                </div>
+                
+                <button type="submit" class="w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 transition duration-200 font-semibold">
+                    Login
+                </button>
+            </form>
+            
+            <div class="mt-6 text-center text-sm text-gray-600 bg-gray-50 p-3 rounded">
+                <p class="font-semibold mb-1">Demo Credentials:</p>
+                <div class="grid grid-cols-2 gap-2 text-xs">
+                    <p><strong>admin</strong> / password</p>
+                    <p><strong>teacher</strong> / password</p>
+                    <p><strong>student</strong> / password</p>
+                    <p><strong>hr</strong> / password</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('loginForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const username = document.getElementById('username').value.trim();
+            const password = document.getElementById('password').value.trim();
+            const errorElement = document.getElementById('loginError');
+            
+            try {
+                const response = await fetch('/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ username, password })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    window.location.href = data.redirect;
+                } else {
+                    errorElement.classList.remove('hidden');
+                    document.getElementById('password').value = '';
+                }
+            } catch (error) {
+                errorElement.classList.remove('hidden');
+                document.getElementById('password').value = '';
+            }
+        });
+    </script>
+</body>
+</html>

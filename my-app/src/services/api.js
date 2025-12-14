@@ -1,6 +1,11 @@
 import axios from 'axios';
 
 const getApiUrl = () => {
+  // Use environment variable for production, fallback to localhost for development
+  if (process.env.REACT_APP_API_URL) {
+    return process.env.REACT_APP_API_URL;
+  }
+  
   const protocol = window.location.protocol;
   const host = window.location.host;
   

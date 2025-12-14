@@ -16,7 +16,21 @@ quiz_questions_storage = {}
 @teacher_bp.route('/students/progress', methods=['GET'])
 def get_student_progress():
     students = users_collection.find({"role": "student"})
-    student_list = [user_helper(s) for s in students]
+    student_list = []
+    
+    for student in students:
+        student_id = str(student["_id"])
+        # Get submission count for this student
+        submission_count = submissions_collection.count_documents({"student_id": student_id})
+        
+        # Update student record with submission count
+        users_collection.update_one(
+            {"_id": student["_id"]},
+            {"$set": {"submittedAssignments": submission_count}}
+        )
+        
+        student_list.append(user_helper(student, submission_count))
+    
     return jsonify(student_list)
 
 @teacher_bp.route('/assignments', methods=['POST'])
@@ -26,10 +40,11 @@ def create_assignment():
         data = request.get_json()
         title = data.get('title')
         description = data.get('description')
-        due_date = data.get('dueDate')
-        assignment_type = data.get('type', 'manual')
+        due_date = data.get('dueDate', datetime.now().isoformat())
+        assignment_type = data.get('type', 'Assignment')
+        quiz_questions = data.get('quizQuestions')
         
-        if not all([title, description, due_date]):
+        if not all([title, description]):
             return jsonify({"error": "Missing required fields"}), 400
         
         assignment = {
@@ -38,24 +53,20 @@ def create_assignment():
             "dueDate": due_date,
             "type": assignment_type,
             "createdBy": "teacher",
-            "createdAt": datetime.now().isoformat(),
-            "questions": None
+            "createdAt": datetime.now().isoformat()
         }
         
-        if assignment_type == "quiz":
-            quiz_questions = generate_quiz_questions(title, description)
-            if quiz_questions:
-                assignment["questions"] = quiz_questions
-            else:
-                return jsonify({"error": "Failed to generate quiz questions"}), 500
+        # Store quiz questions directly in the assignment document
+        if quiz_questions:
+            assignment["quizQuestions"] = quiz_questions
         
         # Save to MongoDB
         result = teacher_assignments_collection.insert_one(assignment)
         assignment_id = str(result.inserted_id)
         
-        # Store quiz questions if needed
-        if assignment_type == "quiz" and assignment.get("questions"):
-            quiz_questions_storage[assignment_id] = assignment["questions"]
+        # Also store in memory for backward compatibility
+        if quiz_questions:
+            quiz_questions_storage[assignment_id] = quiz_questions
         
         return jsonify({
             "message": "Assignment created successfully",
@@ -137,6 +148,27 @@ def get_admin_assignments(teacher_id):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@teacher_bp.route('/admin_tasks', methods=['GET'])
+def get_admin_tasks():
+    """Get tasks assigned by admin to teachers"""
+    try:
+        # Get all admin-created assignments
+        tasks = list(assignments_collection.find({"createdBy": "admin"}))
+        admin_tasks = []
+        for t in tasks:
+            admin_tasks.append({
+                "id": str(t["_id"]),
+                "title": t["title"],
+                "description": t["description"],
+                "status": t.get("status", "Pending"),
+                "dueDate": t.get("dueDate"),
+                "teacherId": str(t.get("teacherId", ""))
+            })
+        return jsonify(admin_tasks), 200
+    except Exception as e:
+        print(f"Error fetching admin tasks: {e}")
+        return jsonify({"error": "Failed to fetch admin tasks"}), 500
+
 @teacher_bp.route('/admin-assignments/<assignment_id>/complete', methods=['PATCH'])
 def mark_assignment_complete(assignment_id):
     try:
@@ -196,21 +228,65 @@ def update_assignment(assignment_id):
 
 @teacher_bp.route('/submissions', methods=['GET'])
 def get_all_submissions():
-    """Get all student submissions"""
+    """Get all student submissions organized by student"""
     try:
+        # Get all students
+        students = list(users_collection.find({"role": "student"}))
+        
+        # Get all teacher assignments
+        assignments = list(teacher_assignments_collection.find({"createdBy": "teacher"}))
+        
+        # Get all submissions
         submissions = list(submissions_collection.find())
-        all_submissions = []
+        
+        # Create a lookup for submissions by student_id and assignment_id
+        submission_lookup = {}
         for sub in submissions:
-            all_submissions.append({
+            key = f"{sub['student_id']}_{sub['assignment_id']}"
+            submission_data = {
                 "id": str(sub["_id"]),
-                "assignment_id": sub["assignment_id"],
-                "student_id": sub["student_id"],
                 "filename": sub["filename"],
                 "file_path": sub["file_path"],
                 "notes": sub.get("notes", ""),
                 "submitted_at": sub["submitted_at"].isoformat()
-            })
-        return jsonify(all_submissions), 200
+            }
+            
+            # Include quiz score if available
+            if "quiz_score" in sub:
+                submission_data["quiz_score"] = sub["quiz_score"]
+            
+            submission_lookup[key] = submission_data
+        
+        # Build student data with assignment statuses
+        student_submissions = []
+        for student in students:
+            student_id = str(student["_id"])
+            student_data = {
+                "student_id": student_id,
+                "student_name": student["name"],
+                "student_email": student.get("email", ""),
+                "assignments": []
+            }
+            
+            # Check each assignment for this student
+            for assignment in assignments:
+                assignment_id = str(assignment["_id"])
+                submission_key = f"{student_id}_{assignment_id}"
+                
+                assignment_status = {
+                    "assignment_id": assignment_id,
+                    "assignment_title": assignment["title"],
+                    "assignment_type": assignment.get("type", "Assignment"),
+                    "due_date": assignment.get("dueDate", ""),
+                    "submitted": submission_key in submission_lookup,
+                    "submission": submission_lookup.get(submission_key)
+                }
+                
+                student_data["assignments"].append(assignment_status)
+            
+            student_submissions.append(student_data)
+        
+        return jsonify(student_submissions), 200
     except Exception as e:
         print(f"Error fetching submissions: {e}")
         return jsonify({"error": "Failed to fetch submissions"}), 500

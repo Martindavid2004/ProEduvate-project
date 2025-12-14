@@ -88,8 +88,19 @@ def start_interview():
 def evaluate_answers():
     """Evaluates the candidate like a real HR professional with constructive, supportive feedback."""
     data = request.get_json()
-    user_id = data.get('user_id')
+    user_id = data.get('user_id') or data.get('studentId')
     transcript = data.get('transcript')
+    questions = data.get('questions', [])
+    answers = data.get('answers', [])
+    
+    # If transcript is not provided but questions and answers are, build transcript
+    if not transcript and questions and answers:
+        transcript = []
+        for i, (question, answer) in enumerate(zip(questions, answers)):
+            transcript.append({
+                'question': question,
+                'answer': answer
+            })
 
     if not transcript:
         return jsonify({"error": "No transcript provided."}), 400

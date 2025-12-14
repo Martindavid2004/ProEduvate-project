@@ -26,8 +26,7 @@ def generate_safe_response(prompt):
     return "Error: No AI models available. Check your API key."
 
 app = create_app()
-# Enable CORS for all routes to prevent 200 OK OPTIONS but failed POST errors
-CORS(app) 
+# CORS is already configured in create_app() with credentials support 
 
 # Use environment variable for secret key, generate random one if not set
 app.secret_key = os.getenv('SECRET_KEY', os.urandom(24).hex())
@@ -128,4 +127,4 @@ def ask_ai():
         return jsonify({'success': False, 'message': str(e)})
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5001, debug=True)
+    app.run(host='0.0.0.0', port=5000, debug=True)

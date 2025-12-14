@@ -10,7 +10,7 @@ def create_app():
         template_folder=os.path.join(backend_root, 'templates'),
         static_folder=os.path.join(backend_root, 'static')
     )
-    CORS(app)
+    CORS(app, supports_credentials=True, origins=['http://localhost:3000', 'http://127.0.0.1:3000'])
 
     UPLOAD_FOLDER = os.path.join(backend_root, 'uploads', 'resumes')
     app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER

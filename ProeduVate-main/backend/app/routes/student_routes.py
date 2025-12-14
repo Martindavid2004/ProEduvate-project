@@ -63,6 +63,99 @@ def get_student_assignments():
         print(f"Error fetching student assignments: {e}")
         return jsonify({"error": "Failed to fetch assignments"}), 500
 
+@student_bp.route('/<user_id>/assignments', methods=['GET'])
+def get_student_assignments_by_id(user_id):
+    """Get assignments for a specific student"""
+    try:
+        # Students should only see teacher-created assignments
+        # Admin assignments are tasks assigned to teachers, not students
+        teacher_assignments = list(teacher_assignments_collection.find({"createdBy": "teacher"}))
+        
+        all_assignments = []
+        
+        # Process teacher assignments only
+        for a in teacher_assignments:
+            assignment_id = str(a["_id"])
+            # Check if student has submitted this assignment
+            submission = submissions_collection.find_one({
+                "assignment_id": assignment_id,
+                "student_id": user_id
+            })
+            
+            assignment_data = {
+                "id": assignment_id,
+                "title": a["title"],
+                "description": a["description"],
+                "dueDate": a["dueDate"],
+                "type": a.get("type", "manual"),
+                "createdBy": "teacher",
+                "submitted": submission is not None,
+                "submittedAt": submission.get("submitted_at").isoformat() if submission and submission.get("submitted_at") else None,
+                "status": "submitted" if submission else "pending"
+            }
+            
+            # Add quiz-specific data
+            if a.get("type") == "Quiz" and a.get("quizQuestions"):
+                assignment_data["quiz_questions"] = a["quizQuestions"]
+            
+            # Add quiz score if submitted
+            if submission and submission.get("quiz_score"):
+                assignment_data["quiz_score"] = submission["quiz_score"]
+            
+            all_assignments.append(assignment_data)
+        
+        return jsonify(all_assignments), 200
+    except Exception as e:
+        print(f"Error fetching student assignments: {e}")
+        return jsonify({"error": "Failed to fetch assignments"}), 500
+
+@student_bp.route('/<user_id>/progress', methods=['GET'])
+def get_student_progress(user_id):
+    """Get progress data for a specific student"""
+    try:
+        # Get student information
+        student = users_collection.find_one({"_id": ObjectId(user_id)})
+        
+        if not student:
+            return jsonify({"error": "Student not found"}), 404
+        
+        # Calculate progress metrics
+        total_assignments = assignments_collection.count_documents({}) + teacher_assignments_collection.count_documents({})
+        completed_assignments = submissions_collection.count_documents({"student_id": user_id})
+        
+        # Get quiz-specific data
+        quiz_submissions = list(submissions_collection.find({
+            "student_id": user_id,
+            "quiz_score": {"$exists": True}
+        }))
+        
+        avg_quiz_score = 0
+        if quiz_submissions:
+            avg_quiz_score = sum(sub.get("quiz_score", 0) for sub in quiz_submissions) / len(quiz_submissions)
+        
+        progress = {
+            "totalAssignments": total_assignments,
+            "completedAssignments": completed_assignments,
+            "submittedAssignments": completed_assignments,
+            "completionRate": (completed_assignments / total_assignments * 100) if total_assignments > 0 else 0,
+            "averageScore": student.get("average_score", 0),
+            "attendanceRate": student.get("attendance", 95),
+            "resumeScore": student.get("resumeScore"),
+            "interviewScore": student.get("interviewScore"),
+            "quizScore": avg_quiz_score if avg_quiz_score > 0 else student.get("quizScore"),
+            "averageQuizScore": avg_quiz_score if avg_quiz_score > 0 else student.get("averageQuizScore"),
+            "totalQuizzes": len(quiz_submissions),
+            "recentActivity": [
+                {"date": "2024-12-14", "activity": "Submitted assignment"},
+                {"date": "2024-12-13", "activity": "Completed quiz"}
+            ]
+        }
+        
+        return jsonify(progress), 200
+    except Exception as e:
+        print(f"Error fetching student progress: {e}")
+        return jsonify({"error": "Failed to fetch progress"}), 500
+
 # This route remains unchanged
 @student_bp.route('/<user_id>/upload_resume', methods=['POST'])
 def upload_resume(user_id):
@@ -98,9 +191,22 @@ def upload_resume(user_id):
     if not ats_analysis:
         return jsonify({"error": "Failed to get analysis from AI model. Ensure Ollama is running."}), 500
 
+    # Extract the score - try different possible keys
+    resume_score = ats_analysis.get("match_score") or ats_analysis.get("score") or ats_analysis.get("overall_score")
+    matching_keywords = ats_analysis.get("matching_keywords") or []
+    missing_keywords = ats_analysis.get("missing_keywords") or []
+    summary = ats_analysis.get("summary") or ""
+    
     users_collection.update_one(
         {"_id": ObjectId(user_id)},
-        {"$set": { "resume_filename": filename, "atsScore": ats_analysis.get("match_score") }}
+        {"$set": { 
+            "resume_filename": filename, 
+            "atsScore": resume_score,
+            "resumeScore": resume_score,
+            "matchingSkills": matching_keywords,
+            "missingSkills": missing_keywords,
+            "resumeSummary": summary
+        }}
     )
     
     return jsonify(ats_analysis), 200
@@ -118,6 +224,7 @@ def submit_assignment(assignment_id):
         file = request.files['assignment_file']
         student_id = request.form.get('student_id')
         notes = request.form.get('notes', '') # Get notes, default to empty string
+        quiz_score = request.form.get('quiz_score')  # Get quiz score if provided
 
         # 2. Validate the file and student ID
         if file.filename == '':
@@ -126,7 +233,7 @@ def submit_assignment(assignment_id):
         if not student_id:
             return jsonify({"error": "Missing student_id"}), 400
 
-        if file and allowed_assignment_file(file.filename):
+        if file and (allowed_assignment_file(file.filename) or file.filename.endswith('.json')):
             # 3. Create a secure filename and define a save path
             filename = secure_filename(file.filename)
             
@@ -151,6 +258,10 @@ def submit_assignment(assignment_id):
                 "submitted_at": datetime.now()
             }
             
+            # Add quiz score if provided
+            if quiz_score:
+                submission_record["quiz_score"] = float(quiz_score)
+            
             # Check if student already submitted this assignment, update if exists
             existing = submissions_collection.find_one({
                 "assignment_id": assignment_id,
@@ -164,6 +275,28 @@ def submit_assignment(assignment_id):
                 )
             else:
                 submissions_collection.insert_one(submission_record)
+            
+            # Update student's submission count and quiz scores in users collection
+            total_submissions = submissions_collection.count_documents({"student_id": student_id})
+            update_data = {"submittedAssignments": total_submissions}
+            
+            # If this is a quiz submission, update quiz-related scores
+            if quiz_score:
+                # Calculate average quiz score from all quiz submissions
+                quiz_submissions_list = list(submissions_collection.find({
+                    "student_id": student_id,
+                    "quiz_score": {"$exists": True}
+                }))
+                
+                if quiz_submissions_list:
+                    avg_quiz_score = sum(sub.get("quiz_score", 0) for sub in quiz_submissions_list) / len(quiz_submissions_list)
+                    update_data["quizScore"] = avg_quiz_score
+                    update_data["averageQuizScore"] = avg_quiz_score
+            
+            users_collection.update_one(
+                {"_id": ObjectId(student_id)},
+                {"$set": update_data}
+            )
 
             return jsonify({
                 "message": "Assignment submitted successfully!",
@@ -172,7 +305,8 @@ def submit_assignment(assignment_id):
                     "assignment_id": assignment_id,
                     "student_id": student_id,
                     "filename": filename,
-                    "submitted_at": submission_record["submitted_at"].isoformat()
+                    "submitted_at": submission_record["submitted_at"].isoformat(),
+                    "quiz_score": quiz_score
                 }
             }), 200
         else:

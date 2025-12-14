@@ -18,7 +18,7 @@ const Navbar = ({ onMenuClick }) => {
               <Menu size={24} />
             </button>
             <img 
-              src="/static/WhatsApp_Image_2025-12-02_at_14.51.15__1_-removebg-preview.png" 
+              src="/logo.png" 
               alt="ProEduvate Logo" 
               className="h-10 sm:h-12 w-auto"
             />

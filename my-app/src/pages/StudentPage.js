@@ -10,6 +10,7 @@ const StudentPage = () => {
   const [activeTab, setActiveTab] = useState('profile');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [chatbotOpen, setChatbotOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const { users, assignments, fetchAllData } = useData();
   
   // Student data
@@ -596,6 +597,8 @@ const StudentPage = () => {
             onTabChange={setActiveTab}
             isOpen={sidebarOpen}
             onClose={() => setSidebarOpen(false)}
+            isCollapsed={sidebarCollapsed}
+            onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
           />
 
           <main className="flex-1 overflow-y-auto p-8 bg-gradient-to-br from-gray-50 to-slate-100">

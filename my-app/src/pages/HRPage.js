@@ -8,6 +8,7 @@ import { Users, Award, FileText, Eye, Download, Search, Filter, Trophy, BarChart
 const HRPage = () => {
   const [activeTab, setActiveTab] = useState('overview');
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const { users, fetchAllData } = useData();
   const [candidates, setCandidates] = useState([]);
   const [selectedCandidate, setSelectedCandidate] = useState(null);
@@ -112,6 +113,8 @@ const HRPage = () => {
             onTabChange={setActiveTab}
             isOpen={sidebarOpen}
             onClose={() => setSidebarOpen(false)}
+            isCollapsed={sidebarCollapsed}
+            onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
           />
 
           <main className="flex-1 overflow-y-auto p-8 bg-gradient-to-br from-gray-50 to-slate-100">

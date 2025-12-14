@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import Sidebar from '../components/Sidebar';
 import { useData } from '../context/DataContext';
 import { adminAPI } from '../services/api';
-import { Users, FileText, Activity, CheckSquare, Eye, Trash2, Menu, TrendingUp, BarChart3, PieChart } from 'lucide-react';
+import { Users, FileText, Activity, CheckSquare, Eye, Trash2, Menu, TrendingUp, BarChart3, PieChart, Loader } from 'lucide-react';
 import Modal from '../components/Modal';
 import {
   BarChart, Bar, LineChart, Line, PieChart as RechartsPie, Pie, Cell,
@@ -13,6 +13,7 @@ import {
 const AdminPage = () => {
   const [activeTab, setActiveTab] = useState('users');
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const { users, assignments, fetchAllData, refreshUsers, refreshAssignments } = useData();
   const [roleFilter, setRoleFilter] = useState('');
   const [departmentFilter, setDepartmentFilter] = useState('');
@@ -30,6 +31,7 @@ const AdminPage = () => {
   const [assignmentTitle, setAssignmentTitle] = useState('');
   const [assignmentDesc, setAssignmentDesc] = useState('');
   const [selectedTeacher, setSelectedTeacher] = useState('');
+  const [isAddingUser, setIsAddingUser] = useState(false);
   
   // Status and tasks
   const [statusData, setStatusData] = useState(null);
@@ -89,6 +91,7 @@ const AdminPage = () => {
       return;
     }
 
+    setIsAddingUser(true);
     try {
       const userData = {
         name: newUserName,
@@ -119,9 +122,12 @@ const AdminPage = () => {
       setUserJobRoles('');
       
       await refreshUsers();
+      alert(`✅ Success! User "${userData.name}" has been added successfully.`);
     } catch (error) {
       console.error('Error adding user:', error);
-      alert('Failed to add user.');
+      alert('❌ Failed to add user. Please try again.');
+    } finally {
+      setIsAddingUser(false);
     }
   };
 
@@ -253,6 +259,8 @@ const AdminPage = () => {
             onTabChange={setActiveTab}
             isOpen={sidebarOpen}
             onClose={() => setSidebarOpen(false)}
+            isCollapsed={sidebarCollapsed}
+            onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
           />
 
           <main className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-8 bg-gradient-to-br from-gray-50 to-slate-100">
@@ -477,9 +485,17 @@ const AdminPage = () => {
                     
                     <button
                       onClick={handleAddUser}
-                      className="w-full bg-blue-500 hover:bg-blue-600 text-white px-6 py-2 rounded-lg font-medium transition-colors"
+                      disabled={isAddingUser}
+                      className="w-full bg-blue-500 hover:bg-blue-600 text-white px-6 py-2 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                     >
-                      Add User
+                      {isAddingUser ? (
+                        <>
+                          <Loader className="animate-spin" size={20} />
+                          Adding User...
+                        </>
+                      ) : (
+                        'Add User'
+                      )}
                     </button>
                   </div>
                 </div>

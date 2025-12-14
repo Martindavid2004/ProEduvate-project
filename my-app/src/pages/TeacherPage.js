@@ -8,6 +8,7 @@ import Modal from '../components/Modal';
 const TeacherPage = () => {
   const [activeTab, setActiveTab] = useState('assignment');
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const { users, fetchAllData } = useData();
   
   // Assignment form
@@ -182,6 +183,8 @@ const TeacherPage = () => {
             onTabChange={setActiveTab}
             isOpen={sidebarOpen}
             onClose={() => setSidebarOpen(false)}
+            isCollapsed={sidebarCollapsed}
+            onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
           />
 
           <main className="flex-1 overflow-y-auto p-8 bg-gradient-to-br from-gray-50 to-slate-100">

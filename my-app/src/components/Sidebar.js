@@ -32,7 +32,7 @@ const Sidebar = ({ items, activeTab, onTabChange, isOpen, onClose }) => {
       <aside className={`sidebar w-64 bg-gradient-to-b from-gray-900 to-black border-r border-gray-800 flex flex-col shadow-xl ${isOpen ? 'active' : ''}`}>
         <div className="p-4 border-b border-gray-700 flex items-center justify-between">
           <img 
-            src="/static/WhatsApp_Image_2025-12-02_at_14.51.15__1_-removebg-preview.png" 
+            src="/logo.png" 
             alt="ProeduVate Logo" 
             className="h-17 w-auto"
           />

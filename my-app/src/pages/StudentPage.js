@@ -589,22 +589,16 @@ const StudentPage = () => {
       </button>
 
       <div className="max-w-7xl mx-auto p-2 sm:p-4 h-screen">
-        <div className="bg-gray-100 shadow-lg border-b-4 border-blue-500 rounded-lg sm:rounded-xl overflow-hidden flex flex-col h-full">
-          {/* Logo Header */}
-          <div className="bg-gradient-to-r from-indigo-600 to-blue-500 p-4 flex items-center justify-center">
-            <img src="/logo.png" alt="ProEduvate Logo" className="h-16 w-auto" />
-          </div>
-          
-          <div className="flex flex-1 overflow-hidden">
-            <Sidebar
-              items={sidebarItems}
-              activeTab={activeTab}
-              onTabChange={setActiveTab}
-              isOpen={sidebarOpen}
-              onClose={() => setSidebarOpen(false)}
-            />
+        <div className="bg-gray-100 shadow-lg border-b-4 border-blue-500 rounded-lg sm:rounded-xl overflow-hidden flex h-full">
+          <Sidebar
+            items={sidebarItems}
+            activeTab={activeTab}
+            onTabChange={setActiveTab}
+            isOpen={sidebarOpen}
+            onClose={() => setSidebarOpen(false)}
+          />
 
-            <main className="flex-1 overflow-y-auto p-8 bg-gradient-to-br from-gray-50 to-slate-100">
+          <main className="flex-1 overflow-y-auto p-8 bg-gradient-to-br from-gray-50 to-slate-100">
             {/* Profile Tab */}
             {activeTab === 'profile' && (
               <div className="fade-in">
@@ -1024,7 +1018,6 @@ const StudentPage = () => {
               </div>
             )}
           </main>
-          </div>
         </div>
       </div>
 

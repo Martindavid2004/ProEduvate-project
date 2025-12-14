@@ -45,7 +45,7 @@ const Login = () => {
         <div className="p-8 bg-gray-500 text-center">
           <div className="flex items-center justify-center mb-3">
             <img 
-              src="/static/WhatsApp_Image_2025-12-02_at_14.51.15__1_-removebg-preview.png" 
+              src="/logo.png" 
               alt="ProEduvate Logo" 
               className="h-24 sm:h-28 md:h-32 w-auto"
             />

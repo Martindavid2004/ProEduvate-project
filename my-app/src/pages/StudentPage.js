@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import Sidebar from '../components/Sidebar';
 import Chatbot from '../components/Chatbot';
 import Modal from '../components/Modal';
+import CodingInterface from '../components/CodingInterface';
 import { useData } from '../context/DataContext';
 import { studentAPI, interviewAPI, chatbotAPI } from '../services/api';
 import { FileText, Briefcase, Upload, MessageSquare, Trophy, User, Code, Database, Globe, BarChart3, Network, Cloud, MessageCircle, Users, Users2, Brain, Clock, Target, CheckCircle, Award, ArrowLeft, ClipboardList, Mic, Check, X, Menu } from 'lucide-react';
@@ -53,6 +54,10 @@ const StudentPage = () => {
   const [trainingFeedback, setTrainingFeedback] = useState([]);
   const [trainingLoading, setTrainingLoading] = useState(false);
   const [trainingComplete, setTrainingComplete] = useState(false);
+  
+  // Coding Practice
+  const [codingInterfaceOpen, setCodingInterfaceOpen] = useState(false);
+  const [codingLanguage, setCodingLanguage] = useState('python'); // 'python' or 'c';
   
   // Speech recognition and synthesis
   const recognitionRef = useRef(null);
@@ -245,7 +250,8 @@ const StudentPage = () => {
   };
 
   const technicalCategories = [
-    { id: 'programming', name: 'Programming & Coding', icon: Code, description: 'Practice coding problems and algorithms' },
+    { id: 'programming', name: 'Python Programming', icon: Code, description: 'Practice Python coding problems and algorithms' },
+    { id: 'c-programming', name: 'C Programming', icon: Code, description: 'Practice C coding problems and algorithms' },
     { id: 'databases', name: 'Database & SQL', icon: Database, description: 'Master database concepts and queries' },
     { id: 'webdev', name: 'Web Development', icon: Globe, description: 'Learn frontend and backend technologies' },
     { id: 'dsa', name: 'Data Structures & Algorithms', icon: BarChart3, description: 'Strengthen problem-solving skills' },
@@ -263,6 +269,19 @@ const StudentPage = () => {
   ];
 
   const startTraining = async (category) => {
+    // Special handling for Programming & Coding categories
+    if (category === 'programming') {
+      setCodingLanguage('python');
+      setCodingInterfaceOpen(true);
+      return;
+    }
+    
+    if (category === 'c-programming') {
+      setCodingLanguage('c');
+      setCodingInterfaceOpen(true);
+      return;
+    }
+
     setTrainingCategory(category);
     setTrainingModalOpen(true);
     setTrainingLoading(true);
@@ -1417,6 +1436,14 @@ const StudentPage = () => {
           </div>
         )}
       </Modal>
+
+      {/* Coding Interface Modal */}
+      {codingInterfaceOpen && (
+        <CodingInterface 
+          onClose={() => setCodingInterfaceOpen(false)} 
+          language={codingLanguage}
+        />
+      )}
     </div>
   );
 };

@@ -9,7 +9,7 @@ const CodingInterface = ({ onClose }) => {
   const [testResults, setTestResults] = useState(null);
   const [currentProblemIndex, setCurrentProblemIndex] = useState(0);
   const [customInput, setCustomInput] = useState('');
-  const [activeConsoleTab, setActiveConsoleTab] = useState('input');
+  const [activeConsoleTab, setActiveConsoleTab] = useState('input'); // 'input' or 'output'
   
   const pythonProblems = [
     {
@@ -112,13 +112,14 @@ const CodingInterface = ({ onClose }) => {
 
   const currentProblem = pythonProblems[currentProblemIndex];
   
+  // Initialize code with the first problem's starter code
   useEffect(() => {
     setCode(pythonProblems[0].starterCode);
   }, []);
 
   const runCode = async () => {
     setIsRunning(true);
-    setActiveConsoleTab('output');
+    setActiveConsoleTab('output'); // Switch to output tab when running
     setOutput('Running code...');
     setTestResults(null);
 
@@ -126,9 +127,13 @@ const CodingInterface = ({ onClose }) => {
       const encodedCode = btoa(unescape(encodeURIComponent(code)));
       const encodedInput = customInput ? btoa(customInput) : btoa('');
       
-      const response = await fetch('http://localhost:5000/api/student/execute-code', {
+      const endpoint = 'http://localhost:5000/api/student/execute-code';
+        
+      const response = await fetch(endpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify({
           source_code: encodedCode,
           language_id: 71,
@@ -137,41 +142,47 @@ const CodingInterface = ({ onClose }) => {
         }),
       });
 
-      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
 
       const result = await response.json();
+      console.log('Code Execution Response:', result);
       
       if (result.status && result.status.id === 13) {
-        setOutput('⚠️ Server Error\n\n' + (result.message || ''));
+        let errorMsg = '⚠️ Server Error\n\n';
+        if (result.message) errorMsg += 'Error: ' + result.message;
+        setOutput(errorMsg);
         return;
       }
       
+      // Handle Success and Errors
       if (result.status && result.status.id === 3) {
-        setOutput(result.stdout ? atob(result.stdout) : '');
+        if (result.stdout) {
+          const outputText = atob(result.stdout);
+          setOutput(outputText);
+        } else {
+          setOutput('');
+        }
       } else if (result.status && result.status.id === 5) {
         setOutput('⏱️ Time Limit Exceeded (5 seconds)\n\nYour code took too long to execute.');
       } else if (result.status && result.status.id === 11) {
-        if (result.stderr) {
-          const errorMsg = atob(result.stderr);
-          if (errorMsg.includes('EOFError') || errorMsg.includes('EOF when reading a line')) {
-            setOutput('❌ Input Required\n\nYour program is trying to read input using input() but no input was provided.\n\n💡 How to fix:\n1. Click the "Input" tab below\n2. Enter your input values (one per line)\n3. Click "Run Code" again');
-            setActiveConsoleTab('input');
-          } else if (errorMsg.includes('ValueError: invalid literal for int()')) {
-            setOutput('❌ Invalid Input Type\n\nYour program expected a number but received text instead.\n\n💡 How to fix:\n1. Click the "Input" tab below\n2. Make sure you enter numbers (e.g., 5 and 3)\n3. Each input should be on a new line\n4. Click "Run Code" again\n\n' + errorMsg);
-            setActiveConsoleTab('input');
-          } else {
-            setOutput(`Traceback (most recent call last):\n${errorMsg}`);
-          }
-        } else {
-          setOutput('Runtime Error: Unknown error occurred');
-        }
+         if (result.stderr) {
+            const error = atob(result.stderr);
+            setOutput(`Traceback (most recent call last):\n${error}`);
+         } else {
+            setOutput('Runtime Error: Unknown error occurred');
+         }
       } else if (result.stdout) {
         setOutput(atob(result.stdout));
       } else if (result.stderr) {
         setOutput(`Error:\n${atob(result.stderr)}`);
+      } else if (result.compile_output) {
+        setOutput(`Compilation Error:\n${atob(result.compile_output)}`);
       } else {
         setOutput('(No output)');
       }
+
     } catch (error) {
       setOutput(`❌ Error: ${error.message}\nCheck if backend is running.`);
     } finally {
@@ -193,8 +204,8 @@ const CodingInterface = ({ onClose }) => {
       try {
         const encodedCode = btoa(unescape(encodeURIComponent(code)));
         const encodedInput = btoa(testCase.input);
-        
-        const response = await fetch('http://localhost:5000/api/student/execute-code', {
+        const endpoint = 'http://localhost:5000/api/student/execute-code';
+        const response = await fetch(endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -210,20 +221,22 @@ const CodingInterface = ({ onClose }) => {
         let passed = false;
         let error = null;
 
-        if (result.status && result.status.id === 3 && result.stdout) {
-          actualOutput = atob(result.stdout).trim();
-          passed = actualOutput === testCase.expectedOutput;
+        if (result.status && result.status.id === 3) {
+           if(result.stdout) {
+             actualOutput = atob(result.stdout).trim();
+             passed = actualOutput === testCase.expectedOutput;
+           }
         } else if (result.stderr) {
-          error = atob(result.stderr);
+           error = atob(result.stderr);
         }
 
         results.push({
           testCase: i + 1,
           input: testCase.input,
           expectedOutput: testCase.expectedOutput,
-          actualOutput: actualOutput === '' && result.status && result.status.id === 3 ? '(empty)' : (actualOutput || 'No output'),
-          passed,
-          error,
+          actualOutput: actualOutput || 'No output',
+          passed: passed,
+          error: error,
         });
       } catch (error) {
         results.push({ testCase: i + 1, passed: false, error: 'Network Error' });
@@ -272,6 +285,7 @@ const CodingInterface = ({ onClose }) => {
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-7xl h-[90vh] flex flex-col">
+        {/* Header */}
         <div className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white p-6 rounded-t-xl">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
@@ -286,6 +300,7 @@ const CodingInterface = ({ onClose }) => {
             </button>
           </div>
 
+          {/* Problem Navigation */}
           <div className="flex items-center gap-2">
             <button onClick={previousProblem} disabled={currentProblemIndex === 0} className="bg-white bg-opacity-20 hover:bg-opacity-30 px-3 py-1 rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
               ← Previous
@@ -301,25 +316,27 @@ const CodingInterface = ({ onClose }) => {
                     setTestResults(null);
                   }}
                   className={`px-3 py-1 rounded text-sm whitespace-nowrap transition-colors ${
-                    index === currentProblemIndex ? 'bg-white text-blue-600 font-semibold' : 'bg-white bg-opacity-20 hover:bg-opacity-30'
+                    index === currentProblemIndex
+                      ? 'bg-white text-blue-600 font-semibold'
+                      : 'bg-white bg-opacity-20 hover:bg-opacity-30'
                   }`}
                 >
                   {index + 1}
                 </button>
               ))}
             </div>
-            <button onClick={nextProblem} disabled={currentProblemIndex === pythonProblems.length - 1} className="bg-white bg-opacity-20 hover:bg-opacity-30 px-3 py-1 rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
-              Next →
-            </button>
+            <button
+              onClick={nextProblem}
+              disabled={currentProblemIndex === pythonProblems.length - 1}
+              className="bg-white bg-opacity-20 hover:bg-opacity-30 px-3 py-1 rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            > ? 'bg-white text-blue-600 font-semibold'
           </div>
         </div>
 
+        {/* Main Content */}
         <div className="flex-1 flex overflow-hidden">
-          <div className="w-1/3 border-r border-gray-700 overflow-y-auto p-6" style={{ backgroundColor: '#252526' }}>
-            <div className="mb-4">
-              <div className="flex items-center justify-between mb-2">
-                <h3 className="text-xl font-bold text-gray-100">{currentProblem.title}</h3>
-                <span className={`px-3 py-1 rounded-full text-xs font-semibold ${getDifficultyColor(currentProblem.difficulty)}`}>
+          {/* Left Panel - Problem Description */}
+          <div clas onClick={nextProblem} disabled={currentProblemIndex === pythonProblems.length - 1} className="bg-white bg-opacity-20 hover:bg-opacity-30 px-3 py-1 rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed transition-colors"    <span className={`px-3 py-1 rounded-full text-xs font-semibold ${getDifficultyColor(currentProblem.difficulty)}`}>
                   {currentProblem.difficulty}
                 </span>
               </div>
@@ -340,10 +357,28 @@ const CodingInterface = ({ onClose }) => {
 
             <div>
               <h4 className="font-semibold text-gray-100 mb-2">Test Cases:</h4>
+              <p className="text-sm text-gray-400 mb-2">Your code will be tested against {currentProblem.testCases.length} test cases.</p>
               {testResults && (
                 <div className="space-y-2">
                   {testResults.map((result, index) => (
-                    <div key={index} className={`p-3 rounded-lg border-2 ${result.passed ? 'bg-green-900 bg-opacity-30 border-green-600' : 'bg-red-900 bg-opacity-30 border-red-600'}`}>
+                    <div
+                      key={index}
+                      className={`p-3 rounded-lg border-2 ${
+                        result.passed
+                          ? 'bg-green-900 bg-opacity-30 border-green-600'
+                          : 'bg-red-900 bg-opacity-30 border-red-600'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 mb-1">
+                        {result.passed ? (
+                          <CheckCircle className="text-green-400" size={16} />
+                        ) : (
+                          <XCircle className="text-red-400" size={16} />
+                        <span className="font-semibold text-sm text-gray-200">Test Case {result.testCase}</span>
+                      </div>
+                      <div className="text-xs space-y-1">
+                        <div className="text-gray-300">Input: <span className="font-mono text-blue-300">{result.input}</span></div>
+                         key={index} className={`p-3 rounded-lg border-2 ${result.passed ? 'bg-green-900 bg-opacity-30 border-green-600' : 'bg-red-900 bg-opacity-30 border-red-600'}`}>
                       <div className="flex items-center gap-2 mb-1">
                         {result.passed ? <CheckCircle className="text-green-400" size={16} /> : <XCircle className="text-red-400" size={16} />}
                         <span className="font-semibold text-sm text-gray-200">Test Case {result.testCase}</span>
@@ -352,28 +387,26 @@ const CodingInterface = ({ onClose }) => {
                         <div className="text-gray-300">Input: <span className="font-mono text-blue-300">{result.input}</span></div>
                         <div className="text-gray-300">Expected: <span className="font-mono text-green-300">{result.expectedOutput}</span></div>
                         <div className="text-gray-300">Got: <span className="font-mono text-yellow-300">{result.actualOutput}</span></div>
-                        {result.error && <div className="text-red-400">Error: {result.error}</div>}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="flex-1 flex flex-col" style={{ backgroundColor: '#1e1e1e' }}>
-            <div className="flex-1 flex flex-col p-4">
-              <div className="flex items-center justify-between mb-2">
-                <h4 className="font-semibold text-gray-200">Code Editor</h4>
-                <div className="flex gap-2">
-                  <button onClick={resetCode} className="flex items-center gap-1 text-gray-300 hover:text-white px-3 py-1 rounded hover:bg-gray-700 transition-colors text-sm">
-                    <RotateCcw size={16} /> Reset
+                        {result.error && <div className="text-red-400">Error: {result.error}</div>Name="flex items-center gap-1 text-gray-300 hover:text-white px-3 py-1 rounded hover:bg-gray-700 transition-colors text-sm"
+                  >
+                    <RotateCcw size={16} />
+                    Reset
                   </button>
-                  <button onClick={runCode} disabled={isRunning} className="flex items-center gap-1 bg-green-500 hover:bg-green-600 text-white px-4 py-1 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium">
-                    <Play size={16} /> Run Code
+                  <button
+                    onClick={runCode}
+                    disabled={isRunning}
+                    className="flex items-center gap-1 bg-green-500 hover:bg-green-600 text-white px-4 py-1 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium"
+                  >
+                    <Play size={16} />
+                    Run Code
                   </button>
-                  <button onClick={runTestCases} disabled={isRunning} className="flex items-center gap-1 bg-blue-500 hover:bg-blue-600 text-white px-4 py-1 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium">
-                    <Trophy size={16} /> Submit
+                  <button
+                    onClick={runTestCases}
+                    disabled={isRunning}
+                    className="flex items-center gap-1 bg-blue-500 hover:bg-blue-600 text-white px-4 py-1 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium"
+                  >
+                    <Trophy size={16} />
+                    Submit
                   </button>
                 </div>
               </div>
@@ -383,26 +416,53 @@ const CodingInterface = ({ onClose }) => {
                   language="python"
                   placeholder="Write your Python code here..."
                   onChange={(evn) => setCode(evn.target.value)}
-                  padding={16}
-                  style={{
-                    fontFamily: '"Fira Code", "Consolas", "Monaco", "Courier New", monospace',
-                    fontSize: 14,
-                    backgroundColor: '#1e1e1e',
-                    minHeight: '100%',
-                    outline: 'none',
-                  }}
-                  data-color-mode="dark"
-                />
+                  padding onClick={resetCode} className="flex items-center gap-1 text-gray-300 hover:text-white px-3 py-1 rounded hover:bg-gray-700 transition-colors text-sm">
+                    <RotateCcw size={16} /> Reset
+                  </button>
+                  <button onClick={runCode} disabled={isRunning} className="flex items-center gap-1 bg-green-500 hover:bg-green-600 text-white px-4 py-1 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium">
+                    <Play size={16} /> Run Code
+                  </button>
+                  <button onClick={runTestCases} disabled={isRunning} className="flex items-center gap-1 bg-blue-500 hover:bg-blue-600 text-white px-4 py-1 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium">
+                    <Trophy size={16} />e className="text-gray-100 p-4 font-mono text-sm flex-1 overflow-y-auto whitespace-pre-wrap">
+                  {output || '// Console output will appear here...'}
+                </pre>
+                {/* Input Area - Integrated at bottom like real console */}
+                <div className="border-t border-gray-700 p-2" style={{ backgroundColor: '#1a1a1a' }}>
+                  <div className="flex items-center gap-2">
+                    <span className="text-green-400 font-mono text-sm">{'>'}</span>
+                    <input
+                      type="text"
+                      value={customInput}
+                      onChange={(e) => setCustomInput(e.target.value)}
+                      placeholder="Enter input values separated by space or newline"
+                      className="flex-1 bg-transparent text-gray-300 font-mono text-sm outline-none"
+                      style={{ border: 'none' }}
+                    />
+                  </div>
+                </div>
+              </div>
+              <div className="text-xs text-gray-400 mt-2">
+                💡 Tip: For programs using input(), enter values in the console input (separate multiple values with spaces or use Enter key)
               </div>
             </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
 
+export default CodingInterface;
+Redesigned with Tabs */}
             <div className="border-t-2 border-gray-700 p-4" style={{ backgroundColor: '#252526' }}>
               <div className="flex items-center justify-between mb-2">
                 <div className="flex gap-4">
                     <button 
                         onClick={() => setActiveConsoleTab('input')}
                         className={`flex items-center gap-2 px-3 py-1 rounded-t-lg transition-colors text-sm font-medium ${
-                            activeConsoleTab === 'input' ? 'bg-gray-800 text-white border-t border-x border-gray-600' : 'text-gray-400 hover:text-gray-200'
+                            activeConsoleTab === 'input' 
+                            ? 'bg-gray-800 text-white border-t border-x border-gray-600' 
+                            : 'text-gray-400 hover:text-gray-200'
                         }`}
                     >
                         <Keyboard size={14} /> Input
@@ -410,7 +470,9 @@ const CodingInterface = ({ onClose }) => {
                     <button 
                         onClick={() => setActiveConsoleTab('output')}
                         className={`flex items-center gap-2 px-3 py-1 rounded-t-lg transition-colors text-sm font-medium ${
-                            activeConsoleTab === 'output' ? 'bg-gray-800 text-white border-t border-x border-gray-600' : 'text-gray-400 hover:text-gray-200'
+                            activeConsoleTab === 'output' 
+                            ? 'bg-gray-800 text-white border-t border-x border-gray-600' 
+                            : 'text-gray-400 hover:text-gray-200'
                         }`}
                     >
                         <Terminal size={14} /> Output
@@ -432,13 +494,3 @@ const CodingInterface = ({ onClose }) => {
                         className="w-full h-full bg-gray-900 text-gray-100 p-4 font-mono text-sm resize-none focus:outline-none"
                     />
                 )}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-export default CodingInterface;

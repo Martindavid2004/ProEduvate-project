@@ -8,6 +8,7 @@ from bson import ObjectId
 from werkzeug.utils import secure_filename
 import os
 from ..services.ai_service import extract_text_from_pdf, get_ats_analysis
+from ..services.lambda_service import execute_python_code_lambda
 
 student_bp = Blueprint('student_bp', __name__, url_prefix='/api/student')
 
@@ -114,7 +115,16 @@ def get_student_progress(user_id):
     """Get progress data for a specific student"""
     try:
         # Get student information
-        student = users_collection.find_one({"_id": ObjectId(user_id)})
+        # Try to find user by _id as ObjectId or by integer id field
+        student = None
+        try:
+            student = users_collection.find_one({"_id": ObjectId(user_id)})
+        except:
+            # If ObjectId conversion fails, try finding by integer id
+            try:
+                student = users_collection.find_one({"id": int(user_id)})
+            except:
+                student = users_collection.find_one({"id": user_id})
         
         if not student:
             return jsonify({"error": "Student not found"}), 404
@@ -384,14 +394,7 @@ def get_student_submissions(student_id):
 
 @student_bp.route('/execute-code', methods=['POST'])
 def execute_code():
-    """Execute Python code safely in a restricted environment"""
-    import sys
-    import io
-    import traceback
-    from contextlib import redirect_stdout, redirect_stderr
-    import signal
-    import base64
-    
+    """Execute Python code using AWS Lambda"""
     try:
         data = request.get_json()
         
@@ -400,264 +403,17 @@ def execute_code():
         stdin_input = data.get('stdin', '')
         base64_encoded = data.get('base64_encoded', False)
         
-        # Decode if base64 encoded
-        if base64_encoded:
-            try:
-                source_code = base64.b64decode(source_code).decode('utf-8')
-                stdin_input = base64.b64decode(stdin_input).decode('utf-8') if stdin_input else ''
-            except Exception as e:
-                return jsonify({
-                    "stdout": None,
-                    "stderr": base64.b64encode(f"Failed to decode base64: {str(e)}".encode()).decode() if base64_encoded else f"Failed to decode base64: {str(e)}",
-                    "status": {"id": 11, "description": "Runtime Error"},
-                    "time": None,
-                    "memory": None
-                }), 200
+        # Debug: Print what we received
+        print(f"Received stdin (base64): {stdin_input[:50] if stdin_input else 'EMPTY'}")
         
-        # Create string buffers for stdout and stderr
-        stdout_buffer = io.StringIO()
-        stderr_buffer = io.StringIO()
+        # Use AWS Lambda service to execute code
+        result = execute_python_code_lambda(source_code, stdin_input, base64_encoded)
         
-        # Set up stdin if provided
-        if stdin_input:
-            sys.stdin = io.StringIO(stdin_input)
-        
-        # Execute code with timeout and capture output
-        try:
-            # Timeout handler
-            def timeout_handler(signum, frame):
-                raise TimeoutError("Execution time limit exceeded")
-            
-            # Set 5 second timeout (only works on Unix-like systems)
-            # For Windows, we'll skip the signal-based timeout
-            if sys.platform != 'win32':
-                signal.signal(signal.SIGALRM, timeout_handler)
-                signal.alarm(5)
-            
-            # Redirect stdout and stderr
-            with redirect_stdout(stdout_buffer), redirect_stderr(stderr_buffer):
-                # Create restricted globals (no dangerous functions)
-                restricted_globals = {
-                    '__builtins__': {
-                        'print': print,
-                        'len': len,
-                        'range': range,
-                        'int': int,
-                        'float': float,
-                        'str': str,
-                        'list': list,
-                        'dict': dict,
-                        'tuple': tuple,
-                        'set': set,
-                        'bool': bool,
-                        'sum': sum,
-                        'min': min,
-                        'max': max,
-                        'abs': abs,
-                        'round': round,
-                        'sorted': sorted,
-                        'enumerate': enumerate,
-                        'zip': zip,
-                        'map': map,
-                        'filter': filter,
-                        'input': input,
-                        'isinstance': isinstance,
-                        'type': type,
-                    }
-                }
-                
-                # Execute the code
-                exec(source_code, restricted_globals)
-            
-            # Cancel timeout if set
-            if sys.platform != 'win32':
-                signal.alarm(0)
-            
-            # Get output
-            stdout_output = stdout_buffer.getvalue()
-            stderr_output = stderr_buffer.getvalue()
-            
-            # Prepare response
-            response = {
-                "stdout": base64.b64encode(stdout_output.encode()).decode() if base64_encoded else stdout_output,
-                "stderr": base64.b64encode(stderr_output.encode()).decode() if (base64_encoded and stderr_output) else (stderr_output if stderr_output else None),
-                "status": {"id": 3, "description": "Accepted"},
-                "time": "0.0",
-                "memory": 0,
-                "compile_output": None,
-                "message": None,
-                "token": None
-            }
-            
-            return jsonify(response), 200
-            
-        except TimeoutError:
-            return jsonify({
-                "stdout": None,
-                "stderr": base64.b64encode(b"Time Limit Exceeded (5 seconds)").decode() if base64_encoded else "Time Limit Exceeded (5 seconds)",
-                "status": {"id": 5, "description": "Time Limit Exceeded"},
-                "time": "5.0",
-                "memory": None
-            }), 200
-            
-        except Exception as exec_error:
-            # Capture the error traceback
-            error_traceback = traceback.format_exc()
-            stderr_output = stderr_buffer.getvalue()
-            full_error = stderr_output + error_traceback if stderr_output else error_traceback
-            
-            return jsonify({
-                "stdout": base64.b64encode(stdout_buffer.getvalue().encode()).decode() if base64_encoded else stdout_buffer.getvalue(),
-                "stderr": base64.b64encode(full_error.encode()).decode() if base64_encoded else full_error,
-                "status": {"id": 11, "description": "Runtime Error"},
-                "time": None,
-                "memory": None
-            }), 200
-            
-        finally:
-            # Reset stdin
-            sys.stdin = sys.__stdin__
-            if sys.platform != 'win32':
-                signal.alarm(0)
+        return jsonify(result), 200
     
     except Exception as e:
         error_msg = f"Server error: {str(e)}"
-        return jsonify({
-            "stdout": None,
-            "stderr": base64.b64encode(error_msg.encode()).decode() if data.get('base64_encoded') else error_msg,
-            "status": {"id": 13, "description": "Internal Error"},
-            "time": None,
-            "memory": None,
-            "message": base64.b64encode(error_msg.encode()).decode() if data.get('base64_encoded') else error_msg
-        }), 200
-
-
-@student_bp.route('/execute-c-code', methods=['POST'])
-def execute_c_code():
-    """Compile and execute C code safely"""
-    import subprocess
-    import tempfile
-    import base64
-    import os
-    
-    try:
-        data = request.get_json()
-        
-        # Get code and input from request
-        source_code = data.get('source_code', '')
-        stdin_input = data.get('stdin', '')
-        base64_encoded = data.get('base64_encoded', False)
-        
-        # Decode if base64 encoded
-        if base64_encoded:
-            try:
-                source_code = base64.b64decode(source_code).decode('utf-8')
-                stdin_input = base64.b64decode(stdin_input).decode('utf-8') if stdin_input else ''
-            except Exception as e:
-                return jsonify({
-                    "stdout": None,
-                    "stderr": base64.b64encode(f"Failed to decode base64: {str(e)}".encode()).decode() if base64_encoded else f"Failed to decode base64: {str(e)}",
-                    "status": {"id": 11, "description": "Runtime Error"},
-                    "time": None,
-                    "memory": None
-                }), 200
-        
-        # Create temporary files for source code and executable
-        with tempfile.TemporaryDirectory() as temp_dir:
-            source_file = os.path.join(temp_dir, 'program.c')
-            exe_file = os.path.join(temp_dir, 'program.exe' if os.name == 'nt' else 'program')
-            
-            # Write source code to file
-            with open(source_file, 'w') as f:
-                f.write(source_code)
-            
-            # Compile the C code
-            compile_cmd = ['gcc', source_file, '-o', exe_file, '-lm']
-            try:
-                compile_result = subprocess.run(
-                    compile_cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=10
-                )
-                
-                if compile_result.returncode != 0:
-                    # Compilation error
-                    compile_error = compile_result.stderr or compile_result.stdout or "Compilation failed"
-                    return jsonify({
-                        "stdout": None,
-                        "stderr": None,
-                        "compile_output": base64.b64encode(compile_error.encode()).decode() if base64_encoded else compile_error,
-                        "status": {"id": 6, "description": "Compilation Error"},
-                        "time": None,
-                        "memory": None
-                    }), 200
-                
-            except subprocess.TimeoutExpired:
-                return jsonify({
-                    "stdout": None,
-                    "stderr": base64.b64encode(b"Compilation Timeout").decode() if base64_encoded else "Compilation Timeout",
-                    "status": {"id": 13, "description": "Internal Error"},
-                    "time": None,
-                    "memory": None
-                }), 200
-            except FileNotFoundError:
-                return jsonify({
-                    "stdout": None,
-                    "stderr": base64.b64encode(b"GCC compiler not found. Please install GCC.").decode() if base64_encoded else "GCC compiler not found. Please install GCC.",
-                    "status": {"id": 13, "description": "Internal Error"},
-                    "time": None,
-                    "memory": None
-                }), 200
-            
-            # Execute the compiled program
-            try:
-                run_result = subprocess.run(
-                    [exe_file],
-                    input=stdin_input,
-                    capture_output=True,
-                    text=True,
-                    timeout=5
-                )
-                
-                stdout_output = run_result.stdout
-                stderr_output = run_result.stderr
-                
-                # Check return code
-                if run_result.returncode == 0:
-                    # Success
-                    return jsonify({
-                        "stdout": base64.b64encode(stdout_output.encode()).decode() if base64_encoded else stdout_output,
-                        "stderr": base64.b64encode(stderr_output.encode()).decode() if (base64_encoded and stderr_output) else (stderr_output if stderr_output else None),
-                        "status": {"id": 3, "description": "Accepted"},
-                        "time": "0.0",
-                        "memory": 0,
-                        "compile_output": None,
-                        "message": None,
-                        "token": None
-                    }), 200
-                else:
-                    # Runtime error
-                    error_output = stderr_output or stdout_output or "Runtime error"
-                    return jsonify({
-                        "stdout": base64.b64encode(stdout_output.encode()).decode() if base64_encoded else stdout_output,
-                        "stderr": base64.b64encode(error_output.encode()).decode() if base64_encoded else error_output,
-                        "status": {"id": 11, "description": "Runtime Error"},
-                        "time": None,
-                        "memory": None
-                    }), 200
-                    
-            except subprocess.TimeoutExpired:
-                return jsonify({
-                    "stdout": None,
-                    "stderr": base64.b64encode(b"Time Limit Exceeded (5 seconds)").decode() if base64_encoded else "Time Limit Exceeded (5 seconds)",
-                    "status": {"id": 5, "description": "Time Limit Exceeded"},
-                    "time": "5.0",
-                    "memory": None
-                }), 200
-    
-    except Exception as e:
-        error_msg = f"Server error: {str(e)}"
+        import base64
         return jsonify({
             "stdout": None,
             "stderr": base64.b64encode(error_msg.encode()).decode() if data.get('base64_encoded') else error_msg,

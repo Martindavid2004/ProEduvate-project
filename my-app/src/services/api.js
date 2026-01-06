@@ -1,6 +1,9 @@
 import axios from 'axios';
 
 const getApiUrl = () => {
+  // Temporarily force local backend for testing
+  return 'http://127.0.0.1:5000/api';
+  
   // Use environment variable for production, fallback to localhost for development
   if (process.env.REACT_APP_API_URL) {
     return process.env.REACT_APP_API_URL;

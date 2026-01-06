@@ -6,3 +6,4 @@ pymongo==4.6.1
 PyMuPDF==1.24.14
 Werkzeug==3.0.1
 gunicorn==21.2.0
+boto3==1.35.0

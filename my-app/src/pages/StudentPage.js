@@ -56,7 +56,8 @@ const StudentPage = () => {
   
   // Coding Practice
   const [codingInterfaceOpen, setCodingInterfaceOpen] = useState(false);
-  const [codingLanguage, setCodingLanguage] = useState('python'); // 'python' or 'c';
+  const [codingLanguage, setCodingLanguage] = useState('python');
+  const [showProgrammingLanguages, setShowProgrammingLanguages] = useState(false); // 'python' or 'c';
   
   // Speech recognition and synthesis
   const recognitionRef = useRef(null);
@@ -250,9 +251,17 @@ const StudentPage = () => {
     setQuizResults(null);
   };
 
+  const programmingLanguages = [
+    { id: 'python', name: 'Python Programming', icon: Code, description: 'Practice Python coding problems and algorithms' },
+  ];
+
   const technicalCategories = [
-    { id: 'programming', name: 'Python Programming', icon: Code, description: 'Practice Python coding problems and algorithms' },
-    { id: 'c-programming', name: 'C Programming', icon: Code, description: 'Practice C coding problems and algorithms' },
+    { 
+      id: 'programming', 
+      name: 'Programming and Coding', 
+      icon: Code, 
+      description: 'Practice coding problems in Python or C'
+    },
     { id: 'databases', name: 'Database & SQL', icon: Database, description: 'Master database concepts and queries' },
     { id: 'webdev', name: 'Web Development', icon: Globe, description: 'Learn frontend and backend technologies' },
     { id: 'dsa', name: 'Data Structures & Algorithms', icon: BarChart3, description: 'Strengthen problem-solving skills' },
@@ -272,14 +281,7 @@ const StudentPage = () => {
   const startTraining = async (category) => {
     // Special handling for Programming & Coding categories
     if (category === 'programming') {
-      setCodingLanguage('python');
-      setCodingInterfaceOpen(true);
-      return;
-    }
-    
-    if (category === 'c-programming') {
-      setCodingLanguage('c');
-      setCodingInterfaceOpen(true);
+      setShowProgrammingLanguages(true);
       return;
     }
 
@@ -332,6 +334,11 @@ const StudentPage = () => {
     } finally {
       setTrainingLoading(false);
     }
+  };
+
+  const selectProgrammingLanguage = () => {
+    setCodingInterfaceOpen(true);
+    setShowProgrammingLanguages(false);
   };
 
   const submitTrainingAnswer = async () => {
@@ -948,28 +955,71 @@ const StudentPage = () => {
                       </h3>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                      {(trainingType === 'technical' ? technicalCategories : nonTechnicalCategories).map(category => (
-                        <div
-                          key={category.id}
-                          className="bg-white p-6 rounded-xl shadow-md hover:shadow-xl transition-all cursor-pointer border-2 border-transparent hover:border-blue-500 transform hover:-translate-y-1"
-                          onClick={() => startTraining(category.id)}
+                    {showProgrammingLanguages ? (
+                      <div>
+                        <button
+                          onClick={() => setShowProgrammingLanguages(false)}
+                          className="mb-6 text-blue-600 hover:text-blue-800 font-medium flex items-center gap-2"
                         >
-                          <div className="flex justify-center mb-3">
-                            <div className="bg-gradient-to-br from-blue-50 to-indigo-50 p-4 rounded-full">
-                              <category.icon className="text-blue-600" size={40} />
+                          <ArrowLeft size={20} />
+                          Back to Categories
+                        </button>
+
+                        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 p-6 rounded-xl shadow-md mb-6">
+                          <div className="flex items-center gap-3 mb-2">
+                            <Code className="text-blue-600" size={28} />
+                            <h3 className="text-xl font-bold text-gray-800">Select Programming Language</h3>
+                          </div>
+                          <p className="text-gray-600">Choose a programming language to practice coding problems and improve your skills.</p>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                          {programmingLanguages.map(language => (
+                            <div
+                              key={language.id}
+                              className="bg-white p-6 rounded-xl shadow-md hover:shadow-xl transition-all cursor-pointer border-2 border-transparent hover:border-blue-500 transform hover:-translate-y-1"
+                              onClick={() => selectProgrammingLanguage(language.id)}
+                            >
+                              <div className="flex justify-center mb-3">
+                                <div className="bg-gradient-to-br from-blue-50 to-indigo-50 p-4 rounded-full">
+                                  <language.icon className="text-blue-600" size={40} />
+                                </div>
+                              </div>
+                              <h4 className="text-lg font-bold text-gray-800 mb-2 text-center">{language.name}</h4>
+                              <p className="text-sm text-gray-600 text-center mb-4">{language.description}</p>
+                              <div className="flex justify-center">
+                                <button className="bg-gradient-to-r from-blue-500 to-indigo-500 hover:from-blue-600 hover:to-indigo-600 text-white px-4 py-2 rounded-lg font-medium transition-colors text-sm">
+                                  Start Coding
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        {(trainingType === 'technical' ? technicalCategories : nonTechnicalCategories).map(category => (
+                          <div
+                            key={category.id}
+                            className="bg-white p-6 rounded-xl shadow-md hover:shadow-xl transition-all cursor-pointer border-2 border-transparent hover:border-blue-500 transform hover:-translate-y-1"
+                            onClick={() => startTraining(category.id)}
+                          >
+                            <div className="flex justify-center mb-3">
+                              <div className="bg-gradient-to-br from-blue-50 to-indigo-50 p-4 rounded-full">
+                                <category.icon className="text-blue-600" size={40} />
+                              </div>
+                            </div>
+                            <h4 className="text-lg font-bold text-gray-800 mb-2 text-center">{category.name}</h4>
+                            <p className="text-sm text-gray-600 text-center mb-4">{category.description}</p>
+                            <div className="flex justify-center">
+                              <button className="bg-gradient-to-r from-blue-500 to-indigo-500 hover:from-blue-600 hover:to-indigo-600 text-white px-4 py-2 rounded-lg font-medium transition-colors text-sm">
+                                Start Session
+                              </button>
                             </div>
                           </div>
-                          <h4 className="text-lg font-bold text-gray-800 mb-2 text-center">{category.name}</h4>
-                          <p className="text-sm text-gray-600 text-center mb-4">{category.description}</p>
-                          <div className="flex justify-center">
-                            <button className="bg-gradient-to-r from-blue-500 to-indigo-500 hover:from-blue-600 hover:to-indigo-600 text-white px-4 py-2 rounded-lg font-medium transition-colors text-sm">
-                              Start Session
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -1439,8 +1489,7 @@ const StudentPage = () => {
       {/* Coding Interface Modal */}
       {codingInterfaceOpen && (
         <CodingInterface 
-          onClose={() => setCodingInterfaceOpen(false)} 
-          language={codingLanguage}
+          onClose={() => setCodingInterfaceOpen(false)}
         />
       )}
     </div>

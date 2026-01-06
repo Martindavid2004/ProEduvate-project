@@ -241,8 +241,8 @@ const AdminPage = () => {
         <Menu size={24} className="text-gray-700" />
       </button>
 
-      <div className="max-w-7xl mx-auto p-2 sm:p-4 h-screen">
-        <div className="bg-gray-100 shadow-lg border-b-4 border-blue-500 rounded-lg sm:rounded-xl overflow-hidden flex h-full">
+      <div className="h-screen">
+        <div className="bg-gray-100 shadow-lg border-b-4 border-blue-500 overflow-hidden flex h-full">
           <Sidebar
             items={sidebarItems}
             activeTab={activeTab}

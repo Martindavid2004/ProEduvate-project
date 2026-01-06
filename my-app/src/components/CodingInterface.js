@@ -10,6 +10,7 @@ const CodingInterface = ({ onClose }) => {
   const [currentProblemIndex, setCurrentProblemIndex] = useState(0);
   const [customInput, setCustomInput] = useState('');
   const [activeConsoleTab, setActiveConsoleTab] = useState('input');
+  const [isProblemVisible, setIsProblemVisible] = useState(true);
   
   const pythonProblems = [
     {
@@ -270,27 +271,27 @@ const CodingInterface = ({ onClose }) => {
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-7xl h-[90vh] flex flex-col">
-        <div className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white p-6 rounded-t-xl">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-3">
-              <Code size={32} />
+    <div className="min-h-screen bg-white flex flex-col">
+      <div className="bg-white w-full h-screen flex flex-col">
+        <div className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white p-3 sm:p-6">
+          <div className="flex items-center justify-between mb-2 sm:mb-4">
+            <div className="flex items-center gap-2 sm:gap-3">
+              <Code size={24} className="sm:w-8 sm:h-8" />
               <div>
-                <h2 className="text-2xl font-bold">Python Coding Practice</h2>
-                <p className="text-blue-100 text-sm">Problem {currentProblemIndex + 1} of {pythonProblems.length}</p>
+                <h2 className="text-lg sm:text-2xl font-bold">Python Coding Practice</h2>
+                <p className="text-blue-100 text-xs sm:text-sm">Problem {currentProblemIndex + 1} of {pythonProblems.length}</p>
               </div>
             </div>
-            <button onClick={onClose} className="text-white hover:bg-white hover:bg-opacity-20 px-4 py-2 rounded-lg transition-colors">
+            <button onClick={onClose} className="text-white hover:bg-white hover:bg-opacity-20 px-2 sm:px-4 py-1 sm:py-2 rounded-lg transition-colors text-sm sm:text-base">
               ✕ Close
             </button>
           </div>
 
-          <div className="flex items-center gap-2">
-            <button onClick={previousProblem} disabled={currentProblemIndex === 0} className="bg-white bg-opacity-20 hover:bg-opacity-30 px-3 py-1 rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
-              ← Previous
+          <div className="flex items-center gap-1 sm:gap-2">
+            <button onClick={previousProblem} disabled={currentProblemIndex === 0} className="bg-white bg-opacity-20 hover:bg-opacity-30 px-2 sm:px-3 py-1 rounded text-xs sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+              ←
             </button>
-            <div className="flex-1 overflow-x-auto flex gap-2">
+            <div className="flex-1 overflow-x-auto flex gap-1 sm:gap-2">
               {pythonProblems.map((problem, index) => (
                 <button
                   key={problem.id}
@@ -300,7 +301,7 @@ const CodingInterface = ({ onClose }) => {
                     setOutput('');
                     setTestResults(null);
                   }}
-                  className={`px-3 py-1 rounded text-sm whitespace-nowrap transition-colors ${
+                  className={`px-2 sm:px-3 py-1 rounded text-xs sm:text-sm whitespace-nowrap transition-colors ${
                     index === currentProblemIndex ? 'bg-white text-blue-600 font-semibold' : 'bg-white bg-opacity-20 hover:bg-opacity-30'
                   }`}
                 >
@@ -308,51 +309,62 @@ const CodingInterface = ({ onClose }) => {
                 </button>
               ))}
             </div>
-            <button onClick={nextProblem} disabled={currentProblemIndex === pythonProblems.length - 1} className="bg-white bg-opacity-20 hover:bg-opacity-30 px-3 py-1 rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
-              Next →
+            <button onClick={nextProblem} disabled={currentProblemIndex === pythonProblems.length - 1} className="bg-white bg-opacity-20 hover:bg-opacity-30 px-2 sm:px-3 py-1 rounded text-xs sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+              →
             </button>
           </div>
         </div>
 
-        <div className="flex-1 flex overflow-hidden">
-          <div className="w-1/3 border-r border-gray-700 overflow-y-auto p-6" style={{ backgroundColor: '#252526' }}>
-            <div className="mb-4">
+        <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
+          {/* Problem Description Panel - Collapsible on Mobile */}
+          <div 
+            className={`${isProblemVisible ? 'block' : 'hidden lg:block'} w-full lg:w-1/3 border-b lg:border-b-0 lg:border-r border-gray-700 overflow-y-auto p-3 sm:p-6`} 
+            style={{ backgroundColor: '#252526' }}>
+            <div className="mb-3 sm:mb-4">
               <div className="flex items-center justify-between mb-2">
-                <h3 className="text-xl font-bold text-gray-100">{currentProblem.title}</h3>
-                <span className={`px-3 py-1 rounded-full text-xs font-semibold ${getDifficultyColor(currentProblem.difficulty)}`}>
-                  {currentProblem.difficulty}
-                </span>
+                <h3 className="text-base sm:text-xl font-bold text-gray-100">{currentProblem.title}</h3>
+                <div className="flex items-center gap-2">
+                  <span className={`px-2 sm:px-3 py-0.5 sm:py-1 rounded-full text-xs font-semibold ${getDifficultyColor(currentProblem.difficulty)}`}>
+                    {currentProblem.difficulty}
+                  </span>
+                  <button 
+                    onClick={() => setIsProblemVisible(!isProblemVisible)}
+                    className="lg:hidden text-gray-400 hover:text-white px-2 py-1 rounded text-xs"
+                  >
+                    {isProblemVisible ? '✕' : ''}
+                  </button>
+                </div>
               </div>
-              <p className="text-gray-300 leading-relaxed">{currentProblem.description}</p>
+              <p className="text-gray-300 leading-relaxed text-xs sm:text-base">{currentProblem.description}</p>
             </div>
 
-            <div className="mb-4">
-              <h4 className="font-semibold text-gray-100 mb-2">Examples:</h4>
+            <div className="mb-3 sm:mb-4">
+              <h4 className="font-semibold text-gray-100 mb-2 text-sm sm:text-base">Examples:</h4>
               {currentProblem.examples.map((example, index) => (
-                <div key={index} className="bg-gray-800 p-3 rounded-lg mb-2 border border-gray-700">
-                  <div className="text-sm">
-                    <div className="text-gray-400">Input: <span className="font-mono text-blue-300">{example.input}</span></div>
-                    <div className="text-gray-400">Output: <span className="font-mono text-green-300">{example.output}</span></div>
+                <div key={index} className="bg-gray-800 p-2 sm:p-3 rounded-lg mb-2 border border-gray-700">
+                  <div className="text-xs sm:text-sm">
+                    <div className="text-gray-400 break-all">Input: <span className="font-mono text-blue-300">{example.input}</span></div>
+                    <div className="text-gray-400 break-all">Output: <span className="font-mono text-green-300">{example.output}</span></div>
                   </div>
                 </div>
               ))}
             </div>
 
             <div>
-              <h4 className="font-semibold text-gray-100 mb-2">Test Cases:</h4>
+              <h4 className="font-semibold text-gray-100 mb-2 text-sm sm:text-base">Test Cases:</h4>
               {testResults && (
                 <div className="space-y-2">
                   {testResults.map((result, index) => (
-                    <div key={index} className={`p-3 rounded-lg border-2 ${result.passed ? 'bg-green-900 bg-opacity-30 border-green-600' : 'bg-red-900 bg-opacity-30 border-red-600'}`}>
+                    <div key={index} className={`p-2 sm:p-3 rounded-lg border-2 ${result.passed ? 'bg-green-900 bg-opacity-30 border-green-600' : 'bg-red-900 bg-opacity-30 border-red-600'}`}>
                       <div className="flex items-center gap-2 mb-1">
-                        {result.passed ? <CheckCircle className="text-green-400" size={16} /> : <XCircle className="text-red-400" size={16} />}
-                        <span className="font-semibold text-sm text-gray-200">Test Case {result.testCase}</span>
+                        {result.passed ? <CheckCircle className="text-green-400" size={14} /> : <XCircle className="text-red-400" size={14} />}
+                        <span className="font-semibold text-xs sm:text-sm text-gray-200">Test Case {result.testCase}</span>
                       </div>
                       <div className="text-xs space-y-1">
-                        <div className="text-gray-300">Input: <span className="font-mono text-blue-300">{result.input}</span></div>
-                        <div className="text-gray-300">Expected: <span className="font-mono text-green-300">{result.expectedOutput}</span></div>
-                        <div className="text-gray-300">Got: <span className="font-mono text-yellow-300">{result.actualOutput}</span></div>
-                        {result.error && <div className="text-red-400">Error: {result.error}</div>}
+                        <div className="text-gray-300 break-all">Input: <span className="font-mono text-blue-300">{result.input}</span></div>
+                        <div className="text-gray-300 break-all">Expected: <span className="font-mono text-green-300">{result.expectedOutput}</span></div>
+                        <div className="text-gray-300 break-all">Got: <span className="font-mono text-yellow-300">{result.actualOutput}</span></div>
+                        {result.error && <div className="text-red-400 break-all">Error: {result.error}</div>}
                       </div>
                     </div>
                   ))}
@@ -361,32 +373,43 @@ const CodingInterface = ({ onClose }) => {
             </div>
           </div>
 
+          {/* Code Editor and Console Panel */}
           <div className="flex-1 flex flex-col" style={{ backgroundColor: '#1e1e1e' }}>
-            <div className="flex-1 flex flex-col p-4">
-              <div className="flex items-center justify-between mb-2">
-                <h4 className="font-semibold text-gray-200">Code Editor</h4>
-                <div className="flex gap-2">
-                  <button onClick={resetCode} className="flex items-center gap-1 text-gray-300 hover:text-white px-3 py-1 rounded hover:bg-gray-700 transition-colors text-sm">
-                    <RotateCcw size={16} /> Reset
+            {/* Toggle Problem Button (Mobile Only) */}
+            {!isProblemVisible && (
+              <button 
+                onClick={() => setIsProblemVisible(true)}
+                className="lg:hidden bg-blue-600 text-white px-3 py-2 m-2 rounded text-xs font-medium hover:bg-blue-700 transition-colors"
+              >
+                📋 Show Problem
+              </button>
+            )}
+            
+            <div className="flex-1 flex flex-col p-2 sm:p-4">
+              <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+                <h4 className="font-semibold text-gray-200 text-sm sm:text-base">Code Editor</h4>
+                <div className="flex gap-1 sm:gap-2">
+                  <button onClick={resetCode} className="flex items-center gap-1 text-gray-300 hover:text-white px-2 sm:px-3 py-1 rounded hover:bg-gray-700 transition-colors text-xs sm:text-sm">
+                    <RotateCcw size={14} className="sm:w-4 sm:h-4" /> <span className="hidden sm:inline">Reset</span>
                   </button>
-                  <button onClick={runCode} disabled={isRunning} className="flex items-center gap-1 bg-green-500 hover:bg-green-600 text-white px-4 py-1 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium">
-                    <Play size={16} /> Run Code
+                  <button onClick={runCode} disabled={isRunning} className="flex items-center gap-1 bg-green-500 hover:bg-green-600 text-white px-2 sm:px-4 py-1 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-xs sm:text-sm font-medium">
+                    <Play size={14} className="sm:w-4 sm:h-4" /> Run
                   </button>
-                  <button onClick={runTestCases} disabled={isRunning} className="flex items-center gap-1 bg-blue-500 hover:bg-blue-600 text-white px-4 py-1 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium">
-                    <Trophy size={16} /> Submit
+                  <button onClick={runTestCases} disabled={isRunning} className="flex items-center gap-1 bg-blue-500 hover:bg-blue-600 text-white px-2 sm:px-4 py-1 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-xs sm:text-sm font-medium">
+                    <Trophy size={14} className="sm:w-4 sm:h-4" /> Submit
                   </button>
                 </div>
               </div>
-              <div className="flex-1 w-full border-2 border-gray-700 rounded-lg overflow-hidden" style={{ backgroundColor: '#1e1e1e' }}>
+              <div className="flex-1 w-full border-2 border-gray-700 rounded-lg overflow-hidden" style={{ backgroundColor: '#1e1e1e', minHeight: '200px' }}>
                 <CodeEditor
                   value={code}
                   language="python"
                   placeholder="Write your Python code here..."
                   onChange={(evn) => setCode(evn.target.value)}
-                  padding={16}
+                  padding={12}
                   style={{
                     fontFamily: '"Fira Code", "Consolas", "Monaco", "Courier New", monospace',
-                    fontSize: 14,
+                    fontSize: window.innerWidth < 640 ? 12 : 14,
                     backgroundColor: '#1e1e1e',
                     minHeight: '100%',
                     outline: 'none',
@@ -396,32 +419,32 @@ const CodingInterface = ({ onClose }) => {
               </div>
             </div>
 
-            <div className="border-t-2 border-gray-700 p-4" style={{ backgroundColor: '#252526' }}>
+            <div className="border-t-2 border-gray-700 p-2 sm:p-4" style={{ backgroundColor: '#252526' }}>
               <div className="flex items-center justify-between mb-2">
-                <div className="flex gap-4">
+                <div className="flex gap-2 sm:gap-4">
                     <button 
                         onClick={() => setActiveConsoleTab('input')}
-                        className={`flex items-center gap-2 px-3 py-1 rounded-t-lg transition-colors text-sm font-medium ${
+                        className={`flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-1 rounded-t-lg transition-colors text-xs sm:text-sm font-medium ${
                             activeConsoleTab === 'input' ? 'bg-gray-800 text-white border-t border-x border-gray-600' : 'text-gray-400 hover:text-gray-200'
                         }`}
                     >
-                        <Keyboard size={14} /> Input
+                        <Keyboard size={12} className="sm:w-3.5 sm:h-3.5" /> Input
                     </button>
                     <button 
                         onClick={() => setActiveConsoleTab('output')}
-                        className={`flex items-center gap-2 px-3 py-1 rounded-t-lg transition-colors text-sm font-medium ${
+                        className={`flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-1 rounded-t-lg transition-colors text-xs sm:text-sm font-medium ${
                             activeConsoleTab === 'output' ? 'bg-gray-800 text-white border-t border-x border-gray-600' : 'text-gray-400 hover:text-gray-200'
                         }`}
                     >
-                        <Terminal size={14} /> Output
+                        <Terminal size={12} className="sm:w-3.5 sm:h-3.5" /> Output
                     </button>
                 </div>
-                {isRunning && <div className="flex items-center gap-2 text-blue-400 text-xs"><Clock className="animate-spin" size={14} /> Running...</div>}
+                {isRunning && <div className="flex items-center gap-1 sm:gap-2 text-blue-400 text-xs"><Clock className="animate-spin" size={12} /> <span className="hidden sm:inline">Running...</span></div>}
               </div>
 
-              <div className="bg-gray-900 rounded-b-lg rounded-tr-lg border border-gray-700 overflow-hidden" style={{ height: '200px', display: 'flex', flexDirection: 'column' }}>
+              <div className="bg-gray-900 rounded-b-lg rounded-tr-lg border border-gray-700 overflow-hidden" style={{ height: '150px', display: 'flex', flexDirection: 'column' }}>
                 {activeConsoleTab === 'output' ? (
-                    <pre className="text-gray-100 p-4 font-mono text-sm flex-1 overflow-y-auto whitespace-pre-wrap">
+                    <pre className="text-gray-100 p-2 sm:p-4 font-mono text-xs sm:text-sm flex-1 overflow-y-auto whitespace-pre-wrap">
                         {output || <span className="text-gray-500">// Run your code to see output here...</span>}
                     </pre>
                 ) : (
@@ -429,7 +452,7 @@ const CodingInterface = ({ onClose }) => {
                         value={customInput}
                         onChange={(e) => setCustomInput(e.target.value)}
                         placeholder="Enter input here (e.g. for split inputs, put each on a new line)"
-                        className="w-full h-full bg-gray-900 text-gray-100 p-4 font-mono text-sm resize-none focus:outline-none"
+                        className="w-full h-full bg-gray-900 text-gray-100 p-2 sm:p-4 font-mono text-xs sm:text-sm resize-none focus:outline-none"
                     />
                 )}
               </div>

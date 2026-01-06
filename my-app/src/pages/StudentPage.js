@@ -604,8 +604,17 @@ const StudentPage = () => {
     { id: 'training', label: 'Placement Training', icon: <Trophy size={20} /> },
   ];
 
+  // If coding interface is open, show it in full screen instead of main content
+  if (codingInterfaceOpen) {
+    return (
+      <CodingInterface 
+        onClose={() => setCodingInterfaceOpen(false)}
+      />
+    );
+  }
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
+    <div className="h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
       {/* Floating Menu Button for Mobile */}
       <button
         onClick={() => setSidebarOpen(!sidebarOpen)}
@@ -614,8 +623,8 @@ const StudentPage = () => {
         <Menu size={24} className="text-gray-700" />
       </button>
 
-      <div className="max-w-7xl mx-auto p-2 sm:p-4 h-screen">
-        <div className="bg-gray-100 shadow-lg border-b-4 border-blue-500 rounded-lg sm:rounded-xl overflow-hidden flex h-full">
+      <div className="h-screen">
+        <div className="bg-gray-100 shadow-lg border-b-4 border-blue-500 overflow-hidden flex h-full">
           <Sidebar
             items={sidebarItems}
             activeTab={activeTab}
@@ -1485,13 +1494,6 @@ const StudentPage = () => {
           </div>
         )}
       </Modal>
-
-      {/* Coding Interface Modal */}
-      {codingInterfaceOpen && (
-        <CodingInterface 
-          onClose={() => setCodingInterfaceOpen(false)}
-        />
-      )}
     </div>
   );
 };

@@ -1,20 +1,14 @@
 import axios from 'axios';
 
 const getApiUrl = () => {
-  // Temporarily force local backend for testing
-  return 'http://127.0.0.1:5000/api';
-  
   // Use environment variable for production, fallback to localhost for development
   if (process.env.REACT_APP_API_URL) {
     return process.env.REACT_APP_API_URL;
   }
   
-  const protocol = window.location.protocol;
-  const host = window.location.host;
-  
-  // If accessing via dev tunnel or any non-localhost domain, use same host
-  if (host.includes('devtunnels.ms') || host.includes('ngrok') || (!host.includes('localhost') && !host.includes('127.0.0.1'))) {
-    return `${protocol}//${host}/api`;
+  // Check if we're in production (Netlify or other hosting)
+  if (process.env.NODE_ENV === 'production') {
+    return 'https://proeduvate-project.onrender.com/api';
   }
   
   // Default to localhost for local development

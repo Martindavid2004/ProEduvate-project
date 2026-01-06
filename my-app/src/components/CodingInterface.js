@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Play, RotateCcw, CheckCircle, XCircle, Clock, Trophy, Code, Terminal, Keyboard } from 'lucide-react';
 import CodeEditor from '@uiw/react-textarea-code-editor';
+import { API_URL } from '../services/api';
 
 const CodingInterface = ({ onClose }) => {
   const [code, setCode] = useState('');
@@ -127,7 +128,7 @@ const CodingInterface = ({ onClose }) => {
       const encodedCode = btoa(unescape(encodeURIComponent(code)));
       const encodedInput = customInput ? btoa(customInput) : btoa('');
       
-      const response = await fetch('http://localhost:5000/api/student/execute-code', {
+      const response = await fetch(`${API_URL}/student/execute-code`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -195,7 +196,7 @@ const CodingInterface = ({ onClose }) => {
         const encodedCode = btoa(unescape(encodeURIComponent(code)));
         const encodedInput = btoa(testCase.input);
         
-        const response = await fetch('http://localhost:5000/api/student/execute-code', {
+        const response = await fetch(`${API_URL}/student/execute-code`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({

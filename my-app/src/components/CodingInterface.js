@@ -213,7 +213,7 @@ const CodingInterface = ({ onClose, language = 'python' }) => {
   // Initialize code with the first problem's starter code
   React.useEffect(() => {
     setCode(problems[0].starterCode);
-  }, [language]);
+  }, [language, problems]);
 
   const runCode = async () => {
     setIsRunning(true);

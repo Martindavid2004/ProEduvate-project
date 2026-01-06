@@ -5,9 +5,9 @@ import { adminAPI } from '../services/api';
 import { Users, FileText, Activity, CheckSquare, Eye, Trash2, Menu, TrendingUp, BarChart3, PieChart, Loader } from 'lucide-react';
 import Modal from '../components/Modal';
 import {
-  BarChart, Bar, LineChart, Line, PieChart as RechartsPie, Pie, Cell,
+  BarChart, Bar, PieChart as RechartsPie, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
-  RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Area, AreaChart
+  RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis
 } from 'recharts';
 
 const AdminPage = () => {
@@ -34,7 +34,6 @@ const AdminPage = () => {
   const [isAddingUser, setIsAddingUser] = useState(false);
   
   // Status and tasks
-  const [statusData, setStatusData] = useState(null);
   const [adminTasks, setAdminTasks] = useState([]);
   const [editingTask, setEditingTask] = useState(null);
   const [editModalOpen, setEditModalOpen] = useState(false);
@@ -43,24 +42,15 @@ const AdminPage = () => {
 
   useEffect(() => {
     fetchAllData();
-  }, []);
+  }, [fetchAllData]);
 
   useEffect(() => {
-    if (activeTab === 'status') {
-      loadStatusData();
-    } else if (activeTab === 'tasks') {
+    if (activeTab === 'tasks') {
       loadAdminTasks();
     }
   }, [activeTab]);
 
-  const loadStatusData = async () => {
-    try {
-      const response = await adminAPI.getStatus();
-      setStatusData(response.data);
-    } catch (error) {
-      console.error('Error loading status:', error);
-    }
-  };
+  // Suppress exhaustive-deps warning as loadAdminTasks is a stable function
 
   const loadAdminTasks = async () => {
     try {
@@ -155,7 +145,7 @@ const AdminPage = () => {
     }
 
     try {
-      const response = await adminAPI.createAssignment({
+      await adminAPI.createAssignment({
         title: assignmentTitle,
         teacherId: selectedTeacher,
         description: assignmentDesc,

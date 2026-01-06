@@ -12,7 +12,7 @@ const StudentPage = () => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [chatbotOpen, setChatbotOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const { users, assignments, fetchAllData } = useData();
+  const { users, fetchAllData } = useData();
   
   // Student data
   const currentStudent = users.find(u => u.role === 'student') || { id: 1, name: 'Demo Student' };
@@ -46,7 +46,6 @@ const StudentPage = () => {
   
   // Placement Training
   const [trainingType, setTrainingType] = useState(null); // 'technical' or 'non-technical'
-  const [trainingCategory, setTrainingCategory] = useState(null);
   const [trainingModalOpen, setTrainingModalOpen] = useState(false);
   const [trainingQuestions, setTrainingQuestions] = useState([]);
   const [currentTrainingIndex, setCurrentTrainingIndex] = useState(0);
@@ -67,6 +66,7 @@ const StudentPage = () => {
   useEffect(() => {
     fetchAllData();
     loadStudentData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -89,6 +89,7 @@ const StudentPage = () => {
         clearInterval(timerIntervalRef.current);
       }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [timerActive, timeRemaining]);
 
   const loadStudentData = async () => {
@@ -282,7 +283,6 @@ const StudentPage = () => {
       return;
     }
 
-    setTrainingCategory(category);
     setTrainingModalOpen(true);
     setTrainingLoading(true);
     setCurrentTrainingIndex(0);
@@ -373,7 +373,6 @@ const StudentPage = () => {
   const closeTrainingModal = () => {
     setTrainingModalOpen(false);
     setTrainingType(null);
-    setTrainingCategory(null);
     setTrainingQuestions([]);
     setCurrentTrainingIndex(0);
     setTrainingAnswer('');

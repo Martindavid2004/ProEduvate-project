@@ -3,14 +3,13 @@ import Sidebar from '../components/Sidebar';
 import Modal from '../components/Modal';
 import { useData } from '../context/DataContext';
 import { hrAPI } from '../services/api';
-import { Users, Award, FileText, Eye, Download, Search, Filter, Trophy, BarChart3, CheckCircle, Menu } from 'lucide-react';
+import { Users, Award, FileText, Eye, Search, Filter, Trophy, BarChart3, CheckCircle, Menu } from 'lucide-react';
 
 const HRPage = () => {
   const [activeTab, setActiveTab] = useState('overview');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const { users, fetchAllData } = useData();
-  const [candidates, setCandidates] = useState([]);
   const [selectedCandidate, setSelectedCandidate] = useState(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -21,17 +20,14 @@ const HRPage = () => {
   useEffect(() => {
     fetchAllData();
     loadCandidates();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadCandidates = async () => {
     try {
-      const response = await hrAPI.getCandidates();
-      setCandidates(response.data);
+      await hrAPI.getCandidates();
     } catch (error) {
       console.error('Error loading candidates:', error);
-      // Fallback to students from users
-      const students = users.filter(u => u.role === 'student');
-      setCandidates(students);
     }
   };
 

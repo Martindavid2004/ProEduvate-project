@@ -37,6 +37,7 @@ const TeacherPage = () => {
   useEffect(() => {
     fetchAllData();
     loadTeacherAssignments();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {

@@ -37,9 +37,12 @@ def verify_jwt_token(token):
     except jwt.InvalidTokenError:
         return None
 
-@auth_bp.route('/register', methods=['POST'])
+@auth_bp.route('/register', methods=['POST', 'OPTIONS'])
 def register_student():
-    """Register a new student account"""
+    """Register a new student user"""
+    if request.method == 'OPTIONS':
+        return '', 200
+        
     try:
         data = request.get_json()
         
@@ -117,9 +120,12 @@ def register_student():
             'message': 'An error occurred during registration'
         }), 500
 
-@auth_bp.route('/login', methods=['POST'])
+@auth_bp.route('/login', methods=['POST', 'OPTIONS'])
 def login_student():
     """Login with email and password"""
+    if request.method == 'OPTIONS':
+        return '', 200
+        
     try:
         data = request.get_json()
         

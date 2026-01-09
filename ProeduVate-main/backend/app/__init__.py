@@ -1,5 +1,5 @@
 # lms_portal_backend/app/__init__.py
-from flask import Flask, send_from_directory
+from flask import Flask, send_from_directory, jsonify
 from flask_cors import CORS
 import os
 
@@ -12,12 +12,18 @@ def create_app():
     )
     
     # Configure CORS to allow requests from localhost and Netlify
-    CORS(app, supports_credentials=True, origins=[
-        'http://localhost:3000',
-        'http://127.0.0.1:3000',
-        'https://proeduvate.netlify.app',
-        'https://*.netlify.app'  # Allow all Netlify preview deployments
-    ])
+    CORS(app, 
+         resources={r"/api/*": {
+             "origins": [
+                 "http://localhost:3000",
+                 "http://127.0.0.1:3000",
+                 "https://proeduvate.netlify.app",
+                 "https://*.netlify.app"
+             ],
+             "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+             "allow_headers": ["Content-Type", "Authorization"],
+             "supports_credentials": True
+         }})
 
     UPLOAD_FOLDER = os.path.join(backend_root, 'uploads', 'resumes')
     app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
@@ -47,5 +53,10 @@ def create_app():
     @app.route('/health')
     def health_check():
         return "Server is running!", 200
+    
+    @app.route('/api/health')
+    def api_health_check():
+        return jsonify({"status": "ok", "message": "API is running"}), 200
 
     return app
+

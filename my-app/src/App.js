@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import { AuthProvider } from './context/AuthContext';
 import { DataProvider } from './context/DataContext';
 import Login from './pages/Login';
+import StudentRegistration from './pages/StudentRegistration';
 import AdminPage from './pages/AdminPage';
 import TeacherPage from './pages/TeacherPage';
 import StudentPage from './pages/StudentPage';
@@ -27,6 +28,7 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/register" element={<StudentRegistration />} />
       <Route 
         path="/admin" 
         element={
@@ -59,7 +61,7 @@ function AppRoutes() {
           </ProtectedRoute>
         } 
       />
-      <Route path="/" element={<Navigate to="/login" replace />} />
+      <Route path="/" element={<Navigate to="/register" replace />} />
     </Routes>
   );
 }

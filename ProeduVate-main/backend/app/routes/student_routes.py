@@ -6,6 +6,7 @@ from ..database import assignments_collection, users_collection, teacher_assignm
 from ..models.assignment import assignment_helper
 from bson import ObjectId
 from werkzeug.utils import secure_filename
+from werkzeug.security import check_password_hash, generate_password_hash
 import os
 from ..services.ai_service import extract_text_from_pdf, get_ats_analysis
 from ..services.lambda_service import execute_python_code_lambda
@@ -422,3 +423,110 @@ def execute_code():
             "memory": None,
             "message": base64.b64encode(error_msg.encode()).decode() if data.get('base64_encoded') else error_msg
         }), 200
+
+@student_bp.route('/change-password', methods=['POST'])
+def change_password():
+    """Change student password"""
+    try:
+        data = request.get_json()
+        student_id = data.get('student_id')
+        current_password = data.get('current_password')
+        new_password = data.get('new_password')
+
+        if not all([student_id, current_password, new_password]):
+            return jsonify({'message': 'All fields are required'}), 400
+
+        # Find the student
+        student = users_collection.find_one({'_id': ObjectId(student_id)})
+        
+        if not student:
+            return jsonify({'message': 'Student not found'}), 404
+
+        # Verify current password
+        if not check_password_hash(student.get('password', ''), current_password):
+            return jsonify({'message': 'Current password is incorrect'}), 401
+
+        # Hash the new password
+        hashed_password = generate_password_hash(new_password)
+
+        # Update the password
+        users_collection.update_one(
+            {'_id': ObjectId(student_id)},
+            {'$set': {'password': hashed_password}}
+        )
+
+        return jsonify({'message': 'Password changed successfully'}), 200
+
+    except Exception as e:
+        print(f"Error changing password: {str(e)}")
+        return jsonify({'message': 'Failed to change password'}), 500
+
+@student_bp.route('/update-profile', methods=['POST'])
+def update_profile():
+    """Update student profile information"""
+    try:
+        data = request.get_json()
+        student_id = data.get('student_id')
+        name = data.get('name')
+        email = data.get('email')
+        department = data.get('department')
+
+        if not all([student_id, name, email, department]):
+            return jsonify({'message': 'All fields are required'}), 400
+
+        # Check if email is already used by another user
+        existing_user = users_collection.find_one({
+            'email': email,
+            '_id': {'$ne': ObjectId(student_id)}
+        })
+        
+        if existing_user:
+            return jsonify({'message': 'Email already in use by another account'}), 400
+
+        # Update the profile
+        users_collection.update_one(
+            {'_id': ObjectId(student_id)},
+            {'$set': {
+                'name': name,
+                'email': email,
+                'department': department
+            }}
+        )
+
+        return jsonify({'message': 'Profile updated successfully'}), 200
+
+    except Exception as e:
+        print(f"Error updating profile: {str(e)}")
+        return jsonify({'message': 'Failed to update profile'}), 500
+
+@student_bp.route('/update-notifications', methods=['POST'])
+def update_notifications():
+    """Update student notification preferences"""
+    try:
+        data = request.get_json()
+        student_id = data.get('student_id')
+        email_notifications = data.get('email_notifications', True)
+        assignment_notifications = data.get('assignment_notifications', True)
+        interview_notifications = data.get('interview_notifications', True)
+
+        if not student_id:
+            return jsonify({'message': 'Student ID is required'}), 400
+
+        # Update notification preferences
+        users_collection.update_one(
+            {'_id': ObjectId(student_id)},
+            {'$set': {
+                'notifications': {
+                    'email': email_notifications,
+                    'assignments': assignment_notifications,
+                    'interviews': interview_notifications
+                }
+            }}
+        )
+
+        return jsonify({'message': 'Notification preferences updated successfully'}), 200
+
+    except Exception as e:
+        print(f"Error updating notifications: {str(e)}")
+        return jsonify({'message': 'Failed to update notification preferences'}), 500
+

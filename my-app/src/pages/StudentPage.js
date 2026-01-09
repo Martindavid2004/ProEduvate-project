@@ -4,8 +4,8 @@ import Chatbot from '../components/Chatbot';
 import Modal from '../components/Modal';
 import CodingInterface from '../components/CodingInterface';
 import { useData } from '../context/DataContext';
-import { studentAPI, interviewAPI, chatbotAPI } from '../services/api';
-import { FileText, Briefcase, Upload, MessageSquare, Trophy, User, Code, Database, Globe, BarChart3, Network, Cloud, MessageCircle, Users, Users2, Brain, Clock, Target, CheckCircle, Award, ArrowLeft, ClipboardList, Mic, Check, X, Menu } from 'lucide-react';
+import { studentAPI, interviewAPI, chatbotAPI, API_URL } from '../services/api';
+import { FileText, Briefcase, Upload, MessageSquare, Trophy, User, Code, Database, Globe, BarChart3, Network, Cloud, MessageCircle, Users, Users2, Brain, Clock, Target, CheckCircle, Award, ArrowLeft, ClipboardList, Mic, Check, X, Menu, Settings, Lock, AlertCircle, UserCircle, Bell, Info, Save, Edit2 } from 'lucide-react';
 
 const StudentPage = () => {
   const [activeTab, setActiveTab] = useState('profile');
@@ -14,8 +14,14 @@ const StudentPage = () => {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const { users, fetchAllData } = useData();
   
-  // Student data
-  const currentStudent = users.find(u => u.role === 'student') || { id: 1, name: 'Demo Student' };
+  // Get logged-in user data from localStorage
+  const loggedInUser = JSON.parse(localStorage.getItem('user') || '{}');
+  
+  // Student data - prioritize logged-in user data
+  const currentStudent = loggedInUser.id 
+    ? loggedInUser 
+    : users.find(u => u.role === 'student') || { id: 1, name: 'Demo Student' };
+  
   const [studentAssignments, setStudentAssignments] = useState([]);
   const [progress, setProgress] = useState(null);
   
@@ -58,6 +64,33 @@ const StudentPage = () => {
   const [codingInterfaceOpen, setCodingInterfaceOpen] = useState(false);
   const [codingLanguage, setCodingLanguage] = useState('python');
   const [showProgrammingLanguages, setShowProgrammingLanguages] = useState(false); // 'python' or 'c';
+  
+  // Settings
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [passwordChangeLoading, setPasswordChangeLoading] = useState(false);
+  const [passwordChangeMessage, setPasswordChangeMessage] = useState('');
+  const [passwordChangeError, setPasswordChangeError] = useState('');
+  
+  // Profile Edit Settings
+  const [editingProfile, setEditingProfile] = useState(false);
+  const [profileName, setProfileName] = useState(currentStudent.name || '');
+  const [profileDepartment, setProfileDepartment] = useState(currentStudent.department || '');
+  const [profileEmail, setProfileEmail] = useState(currentStudent.email || '');
+  const [profileUpdateLoading, setProfileUpdateLoading] = useState(false);
+  const [profileUpdateMessage, setProfileUpdateMessage] = useState('');
+  const [profileUpdateError, setProfileUpdateError] = useState('');
+  
+  // Notification Settings
+  const [emailNotifications, setEmailNotifications] = useState(true);
+  const [assignmentNotifications, setAssignmentNotifications] = useState(true);
+  const [interviewNotifications, setInterviewNotifications] = useState(true);
+  const [notificationLoading, setNotificationLoading] = useState(false);
+  const [notificationMessage, setNotificationMessage] = useState('');
+  
+  // Active settings section
+  const [activeSettingsSection, setActiveSettingsSection] = useState('password');
   
   // Speech recognition and synthesis
   const recognitionRef = useRef(null);
@@ -241,6 +274,161 @@ const StudentPage = () => {
       alert('Failed to submit quiz. Please try again.');
     } finally {
       setQuizSubmitting(false);
+    }
+  };
+
+  const handlePasswordChange = async () => {
+    // Reset messages
+    setPasswordChangeMessage('');
+    setPasswordChangeError('');
+
+    // Validation
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      setPasswordChangeError('All fields are required');
+      return;
+    }
+
+    if (newPassword.length < 6) {
+      setPasswordChangeError('New password must be at least 6 characters long');
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      setPasswordChangeError('New passwords do not match');
+      return;
+    }
+
+    if (currentPassword === newPassword) {
+      setPasswordChangeError('New password must be different from current password');
+      return;
+    }
+
+    setPasswordChangeLoading(true);
+
+    try {
+      const response = await fetch(`${API_URL}/api/student/change-password`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({
+          student_id: currentStudent.id,
+          current_password: currentPassword,
+          new_password: newPassword
+        })
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        setPasswordChangeMessage('Password changed successfully!');
+        setCurrentPassword('');
+        setNewPassword('');
+        setConfirmPassword('');
+      } else {
+        setPasswordChangeError(data.message || 'Failed to change password');
+      }
+    } catch (error) {
+      console.error('Error changing password:', error);
+      setPasswordChangeError('Failed to change password. Please try again.');
+    } finally {
+      setPasswordChangeLoading(false);
+    }
+  };
+
+  const handleProfileUpdate = async () => {
+    setProfileUpdateMessage('');
+    setProfileUpdateError('');
+
+    if (!profileName || !profileEmail || !profileDepartment) {
+      setProfileUpdateError('All fields are required');
+      return;
+    }
+
+    if (!/\S+@\S+\.\S+/.test(profileEmail)) {
+      setProfileUpdateError('Please enter a valid email address');
+      return;
+    }
+
+    setProfileUpdateLoading(true);
+
+    try {
+      const response = await fetch(`${API_URL}/api/student/update-profile`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({
+          student_id: currentStudent.id,
+          name: profileName,
+          email: profileEmail,
+          department: profileDepartment
+        })
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        setProfileUpdateMessage('Profile updated successfully!');
+        setEditingProfile(false);
+        
+        // Update localStorage
+        const updatedUser = {
+          ...currentStudent,
+          name: profileName,
+          email: profileEmail,
+          department: profileDepartment
+        };
+        localStorage.setItem('user', JSON.stringify(updatedUser));
+        
+        setTimeout(() => {
+          window.location.reload();
+        }, 1500);
+      } else {
+        setProfileUpdateError(data.message || 'Failed to update profile');
+      }
+    } catch (error) {
+      console.error('Error updating profile:', error);
+      setProfileUpdateError('Failed to update profile. Please try again.');
+    } finally {
+      setProfileUpdateLoading(false);
+    }
+  };
+
+  const handleNotificationUpdate = async () => {
+    setNotificationMessage('');
+    setNotificationLoading(true);
+
+    try {
+      const response = await fetch(`${API_URL}/api/student/update-notifications`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({
+          student_id: currentStudent.id,
+          email_notifications: emailNotifications,
+          assignment_notifications: assignmentNotifications,
+          interview_notifications: interviewNotifications
+        })
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        setNotificationMessage('Notification preferences saved successfully!');
+        setTimeout(() => setNotificationMessage(''), 3000);
+      } else {
+        setNotificationMessage('Failed to save preferences');
+      }
+    } catch (error) {
+      console.error('Error updating notifications:', error);
+      setNotificationMessage('Failed to save preferences');
+    } finally {
+      setNotificationLoading(false);
     }
   };
 
@@ -602,6 +790,7 @@ const StudentPage = () => {
     { id: 'interview', label: 'AI Interview', icon: <Briefcase size={20} /> },
     { id: 'assignments', label: 'My Assignments', icon: <FileText size={20} /> },
     { id: 'training', label: 'Placement Training', icon: <Trophy size={20} /> },
+    { id: 'settings', label: 'Settings', icon: <Settings size={20} /> },
   ];
 
   // If coding interface is open, show it in full screen instead of main content
@@ -643,24 +832,53 @@ const StudentPage = () => {
                 
                 <div className="bg-white p-8 rounded-xl shadow-md mb-6">
                   <div className="flex items-center space-x-6 mb-8">
-                    <div className="w-24 h-24 bg-gradient-to-br from-blue-400 to-indigo-500 rounded-full flex items-center justify-center text-white text-4xl font-bold">
-                      {currentStudent.name.charAt(0)}
+                    <div className="w-24 h-24 bg-gradient-to-br from-blue-400 to-indigo-500 rounded-full flex items-center justify-center text-white text-4xl font-bold shadow-lg">
+                      {currentStudent.name?.charAt(0).toUpperCase() || 'S'}
                     </div>
                     <div>
-                      <h3 className="text-2xl font-bold text-gray-800">{currentStudent.name}</h3>
-                      <p className="text-gray-600 capitalize">{currentStudent.role}</p>
+                      <h3 className="text-2xl font-bold text-gray-800">{currentStudent.name || 'Student'}</h3>
+                      <p className="text-gray-600 capitalize">{currentStudent.role || 'student'}</p>
+                      {currentStudent.department && (
+                        <p className="text-sm text-gray-500 mt-1">{currentStudent.department}</p>
+                      )}
                     </div>
                   </div>
                   
-                  <div className="space-y-4">
-                    <div className="border-l-4 border-blue-500 pl-4">
-                      <p className="text-sm font-medium text-gray-600">Student ID</p>
-                      <p className="text-lg text-gray-800">{currentStudent.id}</p>
-                    </div>
-                    <div className="border-l-4 border-blue-500 pl-4">
-                      <p className="text-sm font-medium text-gray-600">Email</p>
-                      <p className="text-lg text-gray-800">{currentStudent.email || 'student@example.com'}</p>
-                    </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {currentStudent.id && (
+                      <div className="border-l-4 border-blue-500 pl-4 bg-blue-50 p-3 rounded-r-lg">
+                        <p className="text-sm font-medium text-gray-600">Student ID</p>
+                        <p className="text-lg text-gray-800 font-semibold">{currentStudent.id}</p>
+                      </div>
+                    )}
+                    
+                    {currentStudent.registerNumber && (
+                      <div className="border-l-4 border-indigo-500 pl-4 bg-indigo-50 p-3 rounded-r-lg">
+                        <p className="text-sm font-medium text-gray-600">Register Number</p>
+                        <p className="text-lg text-gray-800 font-semibold">{currentStudent.registerNumber}</p>
+                      </div>
+                    )}
+                    
+                    {currentStudent.email && (
+                      <div className="border-l-4 border-purple-500 pl-4 bg-purple-50 p-3 rounded-r-lg">
+                        <p className="text-sm font-medium text-gray-600">Email</p>
+                        <p className="text-lg text-gray-800">{currentStudent.email}</p>
+                      </div>
+                    )}
+                    
+                    {currentStudent.department && (
+                      <div className="border-l-4 border-green-500 pl-4 bg-green-50 p-3 rounded-r-lg">
+                        <p className="text-sm font-medium text-gray-600">Department</p>
+                        <p className="text-lg text-gray-800">{currentStudent.department}</p>
+                      </div>
+                    )}
+                    
+                    {!currentStudent.registerNumber && !currentStudent.department && (
+                      <div className="border-l-4 border-blue-500 pl-4 bg-blue-50 p-3 rounded-r-lg">
+                        <p className="text-sm font-medium text-gray-600">Email</p>
+                        <p className="text-lg text-gray-800">{currentStudent.email || 'student@example.com'}</p>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -1029,6 +1247,374 @@ const StudentPage = () => {
                         ))}
                       </div>
                     )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Settings Tab */}
+            {activeTab === 'settings' && (
+              <div className="fade-in">
+                <h2 className="text-3xl font-bold mb-6 text-gray-800">Settings</h2>
+                
+                {/* Settings Navigation */}
+                <div className="flex gap-2 mb-6 border-b border-gray-200 overflow-x-auto">
+                  <button
+                    onClick={() => setActiveSettingsSection('password')}
+                    className={`px-4 py-2 font-medium whitespace-nowrap transition-colors ${
+                      activeSettingsSection === 'password'
+                        ? 'text-blue-600 border-b-2 border-blue-600'
+                        : 'text-gray-600 hover:text-gray-800'
+                    }`}
+                  >
+                    <Lock size={18} className="inline mr-2" />
+                    Password
+                  </button>
+                  <button
+                    onClick={() => setActiveSettingsSection('profile')}
+                    className={`px-4 py-2 font-medium whitespace-nowrap transition-colors ${
+                      activeSettingsSection === 'profile'
+                        ? 'text-blue-600 border-b-2 border-blue-600'
+                        : 'text-gray-600 hover:text-gray-800'
+                    }`}
+                  >
+                    <UserCircle size={18} className="inline mr-2" />
+                    Profile
+                  </button>
+                  <button
+                    onClick={() => setActiveSettingsSection('notifications')}
+                    className={`px-4 py-2 font-medium whitespace-nowrap transition-colors ${
+                      activeSettingsSection === 'notifications'
+                        ? 'text-blue-600 border-b-2 border-blue-600'
+                        : 'text-gray-600 hover:text-gray-800'
+                    }`}
+                  >
+                    <Bell size={18} className="inline mr-2" />
+                    Notifications
+                  </button>
+                  <button
+                    onClick={() => setActiveSettingsSection('account')}
+                    className={`px-4 py-2 font-medium whitespace-nowrap transition-colors ${
+                      activeSettingsSection === 'account'
+                        ? 'text-blue-600 border-b-2 border-blue-600'
+                        : 'text-gray-600 hover:text-gray-800'
+                    }`}
+                  >
+                    <Info size={18} className="inline mr-2" />
+                    Account Info
+                  </button>
+                </div>
+
+                {/* Password Change Section */}
+                {activeSettingsSection === 'password' && (
+                  <div className="bg-white p-6 rounded-xl shadow-md">
+                    <h3 className="text-xl font-bold mb-4 text-gray-700 flex items-center gap-2">
+                      <Lock size={24} />
+                      Change Password
+                    </h3>
+                    
+                    <div className="max-w-md space-y-4">
+                      {passwordChangeMessage && (
+                        <div className="p-4 rounded-lg bg-green-50 border border-green-200 text-green-800 flex items-center gap-2">
+                          <CheckCircle size={20} />
+                          {passwordChangeMessage}
+                        </div>
+                      )}
+                      
+                      {passwordChangeError && (
+                        <div className="p-4 rounded-lg bg-red-50 border border-red-200 text-red-800 flex items-center gap-2">
+                          <AlertCircle size={20} />
+                          {passwordChangeError}
+                        </div>
+                      )}
+                      
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Current Password
+                        </label>
+                        <input
+                          type="password"
+                          value={currentPassword}
+                          onChange={(e) => setCurrentPassword(e.target.value)}
+                          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                          placeholder="Enter current password"
+                        />
+                      </div>
+                      
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          New Password
+                        </label>
+                        <input
+                          type="password"
+                          value={newPassword}
+                          onChange={(e) => setNewPassword(e.target.value)}
+                          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                          placeholder="Enter new password (min 6 characters)"
+                        />
+                      </div>
+                      
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Confirm New Password
+                        </label>
+                        <input
+                          type="password"
+                          value={confirmPassword}
+                          onChange={(e) => setConfirmPassword(e.target.value)}
+                          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                          placeholder="Confirm new password"
+                        />
+                      </div>
+                      
+                      <button
+                        onClick={handlePasswordChange}
+                        disabled={passwordChangeLoading}
+                        className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors duration-200 font-medium"
+                      >
+                        {passwordChangeLoading ? 'Changing Password...' : 'Change Password'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Profile Edit Section */}
+                {activeSettingsSection === 'profile' && (
+                  <div className="bg-white p-6 rounded-xl shadow-md">
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="text-xl font-bold text-gray-700 flex items-center gap-2">
+                        <UserCircle size={24} />
+                        Profile Information
+                      </h3>
+                      {!editingProfile && (
+                        <button
+                          onClick={() => setEditingProfile(true)}
+                          className="flex items-center gap-2 px-4 py-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                        >
+                          <Edit2 size={18} />
+                          Edit Profile
+                        </button>
+                      )}
+                    </div>
+                    
+                    <div className="max-w-md space-y-4">
+                      {profileUpdateMessage && (
+                        <div className="p-4 rounded-lg bg-green-50 border border-green-200 text-green-800 flex items-center gap-2">
+                          <CheckCircle size={20} />
+                          {profileUpdateMessage}
+                        </div>
+                      )}
+                      
+                      {profileUpdateError && (
+                        <div className="p-4 rounded-lg bg-red-50 border border-red-200 text-red-800 flex items-center gap-2">
+                          <AlertCircle size={20} />
+                          {profileUpdateError}
+                        </div>
+                      )}
+                      
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Full Name
+                        </label>
+                        <input
+                          type="text"
+                          value={profileName}
+                          onChange={(e) => setProfileName(e.target.value)}
+                          disabled={!editingProfile}
+                          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100 disabled:text-gray-600"
+                          placeholder="Enter your full name"
+                        />
+                      </div>
+                      
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Email
+                        </label>
+                        <input
+                          type="email"
+                          value={profileEmail}
+                          onChange={(e) => setProfileEmail(e.target.value)}
+                          disabled={!editingProfile}
+                          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100 disabled:text-gray-600"
+                          placeholder="Enter your email"
+                        />
+                      </div>
+                      
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Department
+                        </label>
+                        <input
+                          type="text"
+                          value={profileDepartment}
+                          onChange={(e) => setProfileDepartment(e.target.value)}
+                          disabled={!editingProfile}
+                          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100 disabled:text-gray-600"
+                          placeholder="Enter your department"
+                        />
+                      </div>
+                      
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Register Number
+                        </label>
+                        <input
+                          type="text"
+                          value={currentStudent.registerNumber || 'N/A'}
+                          disabled
+                          className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-100 text-gray-600"
+                        />
+                        <p className="text-xs text-gray-500 mt-1">Register number cannot be changed</p>
+                      </div>
+                      
+                      {editingProfile && (
+                        <div className="flex gap-3">
+                          <button
+                            onClick={handleProfileUpdate}
+                            disabled={profileUpdateLoading}
+                            className="flex-1 bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors duration-200 font-medium flex items-center justify-center gap-2"
+                          >
+                            <Save size={18} />
+                            {profileUpdateLoading ? 'Saving...' : 'Save Changes'}
+                          </button>
+                          <button
+                            onClick={() => {
+                              setEditingProfile(false);
+                              setProfileName(currentStudent.name || '');
+                              setProfileEmail(currentStudent.email || '');
+                              setProfileDepartment(currentStudent.department || '');
+                              setProfileUpdateError('');
+                            }}
+                            className="flex-1 bg-gray-200 text-gray-700 py-2 px-4 rounded-lg hover:bg-gray-300 transition-colors duration-200 font-medium"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Notification Preferences Section */}
+                {activeSettingsSection === 'notifications' && (
+                  <div className="bg-white p-6 rounded-xl shadow-md">
+                    <h3 className="text-xl font-bold mb-4 text-gray-700 flex items-center gap-2">
+                      <Bell size={24} />
+                      Notification Preferences
+                    </h3>
+                    
+                    <div className="max-w-md space-y-4">
+                      {notificationMessage && (
+                        <div className="p-4 rounded-lg bg-green-50 border border-green-200 text-green-800 flex items-center gap-2">
+                          <CheckCircle size={20} />
+                          {notificationMessage}
+                        </div>
+                      )}
+                      
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between p-4 border border-gray-200 rounded-lg">
+                          <div>
+                            <p className="font-medium text-gray-800">Email Notifications</p>
+                            <p className="text-sm text-gray-600">Receive updates via email</p>
+                          </div>
+                          <label className="relative inline-flex items-center cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={emailNotifications}
+                              onChange={(e) => setEmailNotifications(e.target.checked)}
+                              className="sr-only peer"
+                            />
+                            <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                          </label>
+                        </div>
+                        
+                        <div className="flex items-center justify-between p-4 border border-gray-200 rounded-lg">
+                          <div>
+                            <p className="font-medium text-gray-800">Assignment Updates</p>
+                            <p className="text-sm text-gray-600">Get notified about new assignments</p>
+                          </div>
+                          <label className="relative inline-flex items-center cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={assignmentNotifications}
+                              onChange={(e) => setAssignmentNotifications(e.target.checked)}
+                              className="sr-only peer"
+                            />
+                            <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                          </label>
+                        </div>
+                        
+                        <div className="flex items-center justify-between p-4 border border-gray-200 rounded-lg">
+                          <div>
+                            <p className="font-medium text-gray-800">Interview Notifications</p>
+                            <p className="text-sm text-gray-600">Alerts for interview schedules</p>
+                          </div>
+                          <label className="relative inline-flex items-center cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={interviewNotifications}
+                              onChange={(e) => setInterviewNotifications(e.target.checked)}
+                              className="sr-only peer"
+                            />
+                            <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                          </label>
+                        </div>
+                      </div>
+                      
+                      <button
+                        onClick={handleNotificationUpdate}
+                        disabled={notificationLoading}
+                        className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors duration-200 font-medium flex items-center justify-center gap-2"
+                      >
+                        <Save size={18} />
+                        {notificationLoading ? 'Saving...' : 'Save Preferences'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Account Information Section */}
+                {activeSettingsSection === 'account' && (
+                  <div className="bg-white p-6 rounded-xl shadow-md">
+                    <h3 className="text-xl font-bold mb-4 text-gray-700 flex items-center gap-2">
+                      <Info size={24} />
+                      Account Information
+                    </h3>
+                    
+                    <div className="max-w-md space-y-4">
+                      <div className="p-4 border border-gray-200 rounded-lg">
+                        <p className="text-sm text-gray-600 mb-1">Student ID</p>
+                        <p className="font-medium text-gray-800">{currentStudent.id}</p>
+                      </div>
+                      
+                      <div className="p-4 border border-gray-200 rounded-lg">
+                        <p className="text-sm text-gray-600 mb-1">Register Number</p>
+                        <p className="font-medium text-gray-800">{currentStudent.registerNumber || 'N/A'}</p>
+                      </div>
+                      
+                      <div className="p-4 border border-gray-200 rounded-lg">
+                        <p className="text-sm text-gray-600 mb-1">Email Address</p>
+                        <p className="font-medium text-gray-800">{currentStudent.email}</p>
+                      </div>
+                      
+                      <div className="p-4 border border-gray-200 rounded-lg">
+                        <p className="text-sm text-gray-600 mb-1">Department</p>
+                        <p className="font-medium text-gray-800">{currentStudent.department || 'N/A'}</p>
+                      </div>
+                      
+                      <div className="p-4 border border-gray-200 rounded-lg">
+                        <p className="text-sm text-gray-600 mb-1">Role</p>
+                        <p className="font-medium text-gray-800 capitalize">{currentStudent.role || 'Student'}</p>
+                      </div>
+                      
+                      <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                        <p className="text-sm text-blue-600 mb-2">💡 Need Help?</p>
+                        <p className="text-sm text-gray-700">
+                          If you need to change your register number or have any account issues, 
+                          please contact your administrator.
+                        </p>
+                      </div>
+                    </div>
                   </div>
                 )}
               </div>

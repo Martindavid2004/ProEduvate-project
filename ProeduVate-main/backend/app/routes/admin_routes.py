@@ -70,6 +70,54 @@ def delete_user(user_id):
         return jsonify({"success": True, "message": "User deleted"}), 200
     return jsonify({"error": "User not found"}), 404
 
+# --- Student-Teacher Assignment ---
+@admin_bp.route('/assign-students', methods=['POST'])
+def assign_students_to_teacher():
+    """Assign multiple students to a teacher"""
+    try:
+        data = request.get_json()
+        
+        if not data or not data.get('teacherId') or not data.get('studentIds'):
+            return jsonify({"error": "Missing teacherId or studentIds"}), 400
+        
+        teacher_id = data['teacherId']
+        student_ids = data['studentIds']
+        
+        # Verify teacher exists
+        teacher = users_collection.find_one({"_id": ObjectId(teacher_id), "role": "teacher"})
+        if not teacher:
+            return jsonify({"error": "Teacher not found"}), 404
+        
+        # Update each student to assign them to this teacher
+        updated_count = 0
+        for student_id in student_ids:
+            result = users_collection.update_one(
+                {"_id": ObjectId(student_id), "role": "student"},
+                {"$set": {
+                    "assignedTeacherId": teacher_id,
+                    "assignedTeacherName": teacher.get('name', ''),
+                    "assignedAt": datetime.datetime.utcnow()
+                }}
+            )
+            if result.modified_count > 0 or result.matched_count > 0:
+                updated_count += 1
+        
+        # Also update teacher's record to maintain list of assigned students
+        users_collection.update_one(
+            {"_id": ObjectId(teacher_id)},
+            {"$addToSet": {"assignedStudents": {"$each": student_ids}}}
+        )
+        
+        return jsonify({
+            "success": True,
+            "message": f"Successfully assigned {updated_count} student(s) to teacher",
+            "assignedCount": updated_count
+        }), 200
+        
+    except Exception as e:
+        print(f"Error assigning students to teacher: {e}")
+        return jsonify({"error": "Failed to assign students to teacher"}), 500
+
 # --- Assignment Management ---
 @admin_bp.route('/assignments', methods=['GET'])
 def get_assignments():

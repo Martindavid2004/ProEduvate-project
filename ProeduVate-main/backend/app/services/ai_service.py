@@ -20,10 +20,10 @@ else:
 
 # List of models to try, in order of preference.
 MODEL_CANDIDATES = [
-    'gemini-2.5-flash',
-    'gemini-flash-latest',
-    'gemini-2.5-pro',
-    'gemini-pro-latest'
+    'gemini-1.5-flash',
+    'gemini-1.5-pro',
+    'gemini-pro',
+    'gemini-1.0-pro'
 ]
 
 # Configure safety settings to prevent blocking harmless educational content
@@ -120,7 +120,16 @@ def get_general_chat_response(user_prompt):
     """Gets a conversational, plain-text response from Google Gemini."""
     system_context = "You are an AI assistant helping students with their learning and career development. Provide helpful, encouraging, and educational responses. Keep responses concise but informative.\n\nUser Question: "
     
-    return get_working_model_response(system_context + user_prompt, is_json=False)
+    response = get_working_model_response(system_context + user_prompt, is_json=False)
+    
+    # If AI service fails, provide a helpful fallback message
+    if not response or "Error:" in response:
+        return ("I'm currently experiencing connectivity issues with the AI service. "
+                "This could be due to an invalid API key, network issues, or service unavailability. "
+                "Please check your GOOGLE_API_KEY in the .env file or try again later. "
+                "For immediate assistance, please contact your teacher or administrator.")
+    
+    return response
 
 def get_quiz_fallback(topic, num_questions):
     """Fallback function to generate a simple quiz when AI fails."""

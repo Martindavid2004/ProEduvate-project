@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import Sidebar from '../components/Sidebar';
 import { useData } from '../context/DataContext';
 import { adminAPI } from '../services/api';
-import { Users, FileText, Activity, CheckSquare, Eye, Trash2, Menu, TrendingUp, BarChart3, PieChart, Loader } from 'lucide-react';
+import { Users, FileText, Activity, CheckSquare, Eye, Trash2, Menu, TrendingUp, BarChart3, PieChart, Loader, UserPlus } from 'lucide-react';
 import Modal from '../components/Modal';
 import {
   BarChart, Bar, PieChart as RechartsPie, Pie, Cell,
@@ -21,7 +21,7 @@ const AdminPage = () => {
   
   // Form states
   const [newUserName, setNewUserName] = useState('');
-  const [userRole, setUserRole] = useState('student');
+  const [userRole, setUserRole] = useState('teacher');
   const [userDepartment, setUserDepartment] = useState('');
   const [userIdNumber, setUserIdNumber] = useState('');
   const [userSubject, setUserSubject] = useState('');
@@ -32,6 +32,13 @@ const AdminPage = () => {
   const [assignmentDesc, setAssignmentDesc] = useState('');
   const [selectedTeacher, setSelectedTeacher] = useState('');
   const [isAddingUser, setIsAddingUser] = useState(false);
+  
+  // Student-Teacher Assignment
+  const [assignTeacherId, setAssignTeacherId] = useState('');
+  const [selectedStudents, setSelectedStudents] = useState([]);
+  const [isAssigningStudents, setIsAssigningStudents] = useState(false);
+  const [teacherSearchQuery, setTeacherSearchQuery] = useState('');
+  const [studentSearchQuery, setStudentSearchQuery] = useState('');
   
   // Status and tasks
   const [adminTasks, setAdminTasks] = useState([]);
@@ -103,7 +110,7 @@ const AdminPage = () => {
       
       // Clear all fields
       setNewUserName('');
-      setUserRole('student');
+      setUserRole('teacher');
       setUserDepartment('');
       setUserIdNumber('');
       setUserSubject('');
@@ -119,6 +126,49 @@ const AdminPage = () => {
     } finally {
       setIsAddingUser(false);
     }
+  };
+
+  const handleAssignStudentsToTeacher = async () => {
+    if (!assignTeacherId) {
+      alert('⚠️ Please select a teacher');
+      return;
+    }
+    
+    if (selectedStudents.length === 0) {
+      alert('⚠️ Please select at least one student');
+      return;
+    }
+
+    setIsAssigningStudents(true);
+    try {
+      // Call API to assign students to teacher
+      await adminAPI.assignStudentsToTeacher({
+        teacherId: assignTeacherId,
+        studentIds: selectedStudents
+      });
+      
+      // Clear selections
+      setAssignTeacherId('');
+      setSelectedStudents([]);
+      
+      await refreshUsers();
+      alert(`✅ Success! ${selectedStudents.length} student(s) assigned to teacher successfully.`);
+    } catch (error) {
+      console.error('Error assigning students:', error);
+      alert('❌ Failed to assign students. Please try again.');
+    } finally {
+      setIsAssigningStudents(false);
+    }
+  };
+
+  const handleStudentSelection = (studentId) => {
+    setSelectedStudents(prev => {
+      if (prev.includes(studentId)) {
+        return prev.filter(id => id !== studentId);
+      } else {
+        return [...prev, studentId];
+      }
+    });
   };
 
   const handleRemoveUser = async (userId) => {
@@ -206,6 +256,7 @@ const AdminPage = () => {
   const sidebarItems = [
     { id: 'users', label: 'Manage Users', icon: <Users size={20} /> },
     { id: 'adduser', label: 'Add User', icon: <Users size={20} /> },
+    { id: 'assignstudents', label: 'Assign Students', icon: <UserPlus size={20} /> },
     { id: 'assign', label: 'Assign Work', icon: <FileText size={20} /> },
     { id: 'status', label: 'Status', icon: <Activity size={20} /> },
     { id: 'tasks', label: 'My Tasks', icon: <CheckSquare size={20} /> },
@@ -393,7 +444,6 @@ const AdminPage = () => {
                           onChange={(e) => setUserRole(e.target.value)}
                           className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                         >
-                          <option value="student">Student</option>
                           <option value="teacher">Teacher</option>
                           <option value="admin">Admin</option>
                           <option value="hr">HR</option>
@@ -487,6 +537,186 @@ const AdminPage = () => {
                         'Add User'
                       )}
                     </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Assign Students to Teacher Tab */}
+            {activeTab === 'assignstudents' && (
+              <div className="fade-in">
+                <h2 className="text-3xl font-bold mb-6 text-gray-800">Assign Students to Teacher</h2>
+                
+                <div className="bg-white p-6 rounded-xl shadow-md">
+                  <div className="space-y-6">
+                    {/* Teacher Selection */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Select Teacher *</label>
+                      
+                      {/* Teacher Search Input */}
+                      <input
+                        type="text"
+                        placeholder="Search teachers by name, department, or subject..."
+                        value={teacherSearchQuery}
+                        onChange={(e) => setTeacherSearchQuery(e.target.value)}
+                        className="w-full px-4 py-2 mb-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                      
+                      <select
+                        value={assignTeacherId}
+                        onChange={(e) => setAssignTeacherId(e.target.value)}
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      >
+                        <option value="">Choose a teacher...</option>
+                        {teachers
+                          .filter(teacher => {
+                            const search = teacherSearchQuery.toLowerCase();
+                            return (
+                              teacher.name.toLowerCase().includes(search) ||
+                              (teacher.department && teacher.department.toLowerCase().includes(search)) ||
+                              (teacher.subject && teacher.subject.toLowerCase().includes(search))
+                            );
+                          })
+                          .map(teacher => (
+                            <option key={teacher.id} value={teacher.id}>
+                              {teacher.name} - {teacher.department} {teacher.subject ? `(${teacher.subject})` : ''}
+                            </option>
+                          ))}
+                      </select>
+                      {teacherSearchQuery && teachers.filter(teacher => {
+                        const search = teacherSearchQuery.toLowerCase();
+                        return (
+                          teacher.name.toLowerCase().includes(search) ||
+                          (teacher.department && teacher.department.toLowerCase().includes(search)) ||
+                          (teacher.subject && teacher.subject.toLowerCase().includes(search))
+                        );
+                      }).length === 0 && (
+                        <p className="text-sm text-gray-500 mt-1">No teachers found matching "{teacherSearchQuery}"</p>
+                      )}
+                    </div>
+
+                    {/* Students List */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-3">
+                        Select Students * ({selectedStudents.length} selected)
+                      </label>
+                      
+                      {/* Student Search Input */}
+                      <input
+                        type="text"
+                        placeholder="Search students by name, register number, department, or email..."
+                        value={studentSearchQuery}
+                        onChange={(e) => setStudentSearchQuery(e.target.value)}
+                        className="w-full px-4 py-2 mb-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                      
+                      {students.length === 0 ? (
+                        <div className="text-center py-8 text-gray-500">
+                          <Users size={48} className="mx-auto mb-2 opacity-50" />
+                          <p>No students available</p>
+                        </div>
+                      ) : (
+                        (() => {
+                          const filteredStudents = students.filter(student => {
+                            const search = studentSearchQuery.toLowerCase();
+                            return (
+                              student.name.toLowerCase().includes(search) ||
+                              (student.registerNumber && student.registerNumber.toLowerCase().includes(search)) ||
+                              (student.rollNo && student.rollNo.toLowerCase().includes(search)) ||
+                              (student.department && student.department.toLowerCase().includes(search)) ||
+                              (student.email && student.email.toLowerCase().includes(search))
+                            );
+                          });
+                          
+                          return filteredStudents.length === 0 ? (
+                            <div className="text-center py-8 text-gray-500">
+                              <Users size={48} className="mx-auto mb-2 opacity-50" />
+                              <p>No students found matching "{studentSearchQuery}"</p>
+                            </div>
+                          ) : (
+                            <div className="border border-gray-300 rounded-lg max-h-96 overflow-y-auto">
+                              <div className="divide-y divide-gray-200">
+                                {filteredStudents.map(student => (
+                                  <label
+                                    key={student.id}
+                                    className="flex items-center p-4 hover:bg-blue-50 cursor-pointer transition-colors"
+                                  >
+                                <input
+                                  type="checkbox"
+                                  checked={selectedStudents.includes(student.id)}
+                                  onChange={() => handleStudentSelection(student.id)}
+                                  className="h-5 w-5 text-blue-600 focus:ring-blue-500 border-gray-300 rounded cursor-pointer"
+                                />
+                                <div className="ml-4 flex-1">
+                                  <div className="flex items-center justify-between">
+                                    <div>
+                                      <p className="text-sm font-medium text-gray-900">{student.name}</p>
+                                      <p className="text-sm text-gray-500">
+                                        {student.registerNumber || student.rollNo} 
+                                        {student.department && ` • ${student.department}`}
+                                        {student.email && ` • ${student.email}`}
+                                      </p>
+                                    </div>
+                                    <span className="px-3 py-1 text-xs rounded-full bg-blue-100 text-blue-800">
+                                      Student
+                                    </span>
+                                  </div>
+                                </div>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                          );
+                        })()
+                      )}
+                    </div>
+
+                    {/* Action Buttons */}
+                    <div className="flex gap-4">
+                      <button
+                        onClick={handleAssignStudentsToTeacher}
+                        disabled={isAssigningStudents || !assignTeacherId || selectedStudents.length === 0}
+                        className="flex-1 bg-blue-500 hover:bg-blue-600 text-white px-6 py-3 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                      >
+                        {isAssigningStudents ? (
+                          <>
+                            <Loader className="animate-spin" size={20} />
+                            Assigning...
+                          </>
+                        ) : (
+                          <>
+                            <UserPlus size={20} />
+                            Assign {selectedStudents.length > 0 ? `${selectedStudents.length} Student(s)` : 'Students'} to Teacher
+                          </>
+                        )}
+                      </button>
+                      
+                      <button
+                        onClick={() => {
+                          setAssignTeacherId('');
+                          setSelectedStudents([]);
+                        }}
+                        className="px-6 py-3 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50 transition-colors"
+                      >
+                        Clear
+                      </button>
+                    </div>
+
+                    {/* Info Box */}
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                      <div className="flex items-start gap-3">
+                        <Users size={20} className="text-blue-600 mt-0.5 flex-shrink-0" />
+                        <div className="text-sm text-blue-900">
+                          <p className="font-medium mb-1">How it works:</p>
+                          <ul className="list-disc list-inside space-y-1 text-blue-800">
+                            <li>Select a teacher from the dropdown</li>
+                            <li>Check the students you want to assign to this teacher</li>
+                            <li>Click "Assign Students to Teacher" to save</li>
+                            <li>A single teacher can have multiple students assigned</li>
+                          </ul>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>

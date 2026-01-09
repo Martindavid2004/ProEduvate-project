@@ -1,41 +1,97 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { BACKEND_URL } from '../services/api';
+import { API_URL, BACKEND_URL } from '../services/api';
 
 const Login = () => {
-  const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
   const navigate = useNavigate();
   const { login } = useAuth();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError(false);
+    setErrorMessage('');
 
-    try {
-      const response = await fetch(`${BACKEND_URL}/login`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        credentials: 'include',
-        body: JSON.stringify({ username, password }),
-      });
+    // Check if input looks like an email (for registered users) or username (for demo)
+    const isEmail = email.includes('@');
+    
+    if (isEmail) {
+      // Try database authentication for registered users
+      try {
+        const response = await fetch(`${API_URL}/auth/login`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          credentials: 'include',
+          body: JSON.stringify({ email, password }),
+        });
 
-      const data = await response.json();
+        const data = await response.json();
 
-      if (data.success) {
-        login(username, username); // Using username as role for demo
-        navigate(data.redirect);
-      } else {
+        if (data.success) {
+          // Store JWT token and user data
+          localStorage.setItem('authToken', data.token);
+          localStorage.setItem('user', JSON.stringify(data.user));
+          
+          login(data.user.name, data.user.role);
+          navigate(data.redirect);
+          return;
+        } else {
+          setError(true);
+          setErrorMessage(data.message || 'Invalid email or password');
+          setPassword('');
+          return;
+        }
+      } catch (err) {
         setError(true);
+        setErrorMessage('Network error. Please check your connection.');
         setPassword('');
+        return;
       }
-    } catch (err) {
-      setError(true);
-      setPassword('');
+    } else {
+      // Try demo authentication for username-based login
+      try {
+        const demoResponse = await fetch(`${BACKEND_URL}/login`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          credentials: 'include',
+          body: JSON.stringify({ username: email, password }),
+        });
+
+        const demoData = await demoResponse.json();
+
+        if (demoData.success) {
+          // Store minimal user data for demo accounts
+          const demoUser = {
+            name: email.charAt(0).toUpperCase() + email.slice(1),
+            email: `${email}@demo.com`,
+            role: email,
+            id: email
+          };
+          localStorage.setItem('user', JSON.stringify(demoUser));
+          
+          login(email, email);
+          navigate(demoData.redirect);
+          return;
+        } else {
+          setError(true);
+          setErrorMessage('Invalid credentials. Please check your username and password.');
+          setPassword('');
+          return;
+        }
+      } catch (fallbackErr) {
+        setError(true);
+        setErrorMessage('Network error. Please check your connection.');
+        setPassword('');
+        return;
+      }
     }
   };
 
@@ -57,13 +113,13 @@ const Login = () => {
           <form onSubmit={handleSubmit}>
             <div className="mb-4">
               <label className="block text-gray-700 text-sm font-bold mb-2">
-                Username
+                Email / Username
               </label>
               <input
                 type="text"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                placeholder="Enter your role (admin/teacher/student/hr)"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="Enter your email or username"
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 required
               />
@@ -85,7 +141,7 @@ const Login = () => {
 
             {error && (
               <div className="mb-4 text-red-500 text-sm text-center bg-red-50 p-2 rounded">
-                Invalid username or password
+                {errorMessage || 'Invalid email or password'}
               </div>
             )}
 
@@ -96,6 +152,18 @@ const Login = () => {
               Login
             </button>
           </form>
+
+          <div className="mt-4 text-center">
+            <p className="text-sm text-gray-600">
+              Don't have an account?{' '}
+              <button
+                onClick={() => navigate('/register')}
+                className="font-bold text-indigo-600 hover:text-indigo-700 underline transition-colors"
+              >
+                Register here
+              </button>
+            </p>
+          </div>
 
           <div className="mt-6 text-center text-sm text-gray-600 bg-gray-50 p-3 rounded">
             <p className="font-semibold mb-1">Demo Credentials:</p>

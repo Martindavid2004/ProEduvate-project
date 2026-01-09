@@ -1,6 +1,11 @@
 import axios from 'axios';
 
 const getApiUrl = () => {
+  // Force localhost for development (when running on localhost)
+  if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+    return 'http://127.0.0.1:5000/api';
+  }
+  
   // Use environment variable for production, fallback to localhost for development
   if (process.env.REACT_APP_API_URL) {
     return process.env.REACT_APP_API_URL;
@@ -18,6 +23,8 @@ const getApiUrl = () => {
 export const API_URL = getApiUrl();
 export const BACKEND_URL = API_URL.replace('/api', '');
 
+console.log('API_URL configured as:', API_URL);
+
 const api = axios.create({
   baseURL: API_URL,
   headers: {
@@ -31,6 +38,7 @@ export const adminAPI = {
   getUsers: () => api.get('/admin/users'),
   addUser: (userData) => api.post('/admin/users', userData),
   removeUser: (userId) => api.delete(`/admin/users/${userId}`),
+  assignStudentsToTeacher: (data) => api.post('/admin/assign-students', data),
   getAssignments: () => api.get('/admin/assignments'),
   createAssignment: (assignmentData) => api.post('/admin/assignments', assignmentData),
   getStatus: () => api.get('/admin/status'),

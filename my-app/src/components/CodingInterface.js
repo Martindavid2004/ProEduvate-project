@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Play, RotateCcw, CheckCircle, XCircle, Clock, Trophy, Code, Terminal, Keyboard } from 'lucide-react';
 import CodeEditor from '@uiw/react-textarea-code-editor';
 import { API_URL } from '../services/api';
@@ -13,7 +13,7 @@ const CodingInterface = ({ onClose }) => {
   const [activeConsoleTab, setActiveConsoleTab] = useState('input');
   const [isProblemVisible, setIsProblemVisible] = useState(true);
   
-  const pythonProblems = [
+  const pythonProblems = useMemo(() => [
     {
       id: 1,
       title: 'Sum of Two Numbers',
@@ -110,13 +110,13 @@ const CodingInterface = ({ onClose }) => {
       ],
       starterCode: '# Read n from input\nn = int(input())\n\n# Write your code here\nfib = []  # Generate Fibonacci sequence\n\nprint(" ".join(map(str, fib)))'
     }
-  ];
+  ], []);
 
   const currentProblem = pythonProblems[currentProblemIndex];
   
   useEffect(() => {
     setCode(pythonProblems[0].starterCode);
-  }, []);
+  }, [pythonProblems]);
 
   const runCode = async () => {
     setIsRunning(true);
@@ -446,7 +446,7 @@ const CodingInterface = ({ onClose }) => {
               <div className="bg-gray-900 rounded-b-lg rounded-tr-lg border border-gray-700 overflow-hidden" style={{ height: '150px', display: 'flex', flexDirection: 'column' }}>
                 {activeConsoleTab === 'output' ? (
                     <pre className="text-gray-100 p-2 sm:p-4 font-mono text-xs sm:text-sm flex-1 overflow-y-auto whitespace-pre-wrap">
-                        {output || <span className="text-gray-500">// Run your code to see output here...</span>}
+                        {output || <span className="text-gray-500">{"// Run your code to see output here..."}</span>}
                     </pre>
                 ) : (
                     <textarea 

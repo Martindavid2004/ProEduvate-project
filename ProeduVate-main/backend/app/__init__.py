@@ -10,10 +10,13 @@ def create_app():
         template_folder=os.path.join(backend_root, 'templates'),
         static_folder=os.path.join(backend_root, 'static')
     )
+    
+    # Configure CORS to allow requests from localhost and Netlify
     CORS(app, supports_credentials=True, origins=[
         'http://localhost:3000',
         'http://127.0.0.1:3000',
-        'https://proeduvate.netlify.app'
+        'https://proeduvate.netlify.app',
+        'https://*.netlify.app'  # Allow all Netlify preview deployments
     ])
 
     UPLOAD_FOLDER = os.path.join(backend_root, 'uploads', 'resumes')

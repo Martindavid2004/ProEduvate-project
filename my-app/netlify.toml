@@ -2,7 +2,21 @@
   command = "npm run build"
   publish = "build"
 
+# Environment variables for production
+[build.environment]
+  NODE_VERSION = "18"
+  REACT_APP_API_URL = "https://proeduvate-project.onrender.com/api"
+
+# Redirect rules for React Router
 [[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200
+
+# CORS headers for API requests
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Access-Control-Allow-Origin = "*"
+    Access-Control-Allow-Methods = "GET, POST, PUT, DELETE, OPTIONS"
+    Access-Control-Allow-Headers = "Content-Type, Authorization"

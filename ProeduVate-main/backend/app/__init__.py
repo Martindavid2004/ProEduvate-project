@@ -13,7 +13,7 @@ def create_app():
     
     # Configure CORS to allow requests from localhost and Netlify
     CORS(app, 
-         resources={r"/api/*": {
+         resources={r"/*": {
              "origins": [
                  "http://localhost:3000",
                  "http://127.0.0.1:3000",

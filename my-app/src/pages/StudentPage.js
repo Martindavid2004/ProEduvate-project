@@ -3,6 +3,7 @@ import Sidebar from '../components/Sidebar';
 import Chatbot from '../components/Chatbot';
 import Modal from '../components/Modal';
 import CodingInterface from '../components/CodingInterface';
+import AptitudeTraining from '../components/AptitudeTraining';
 import { useData } from '../context/DataContext';
 import { studentAPI, interviewAPI, chatbotAPI, API_URL } from '../services/api';
 import { FileText, Briefcase, Upload, MessageSquare, Trophy, User, Code, Database, Globe, BarChart3, Network, Cloud, MessageCircle, Users, Users2, Brain, Clock, Target, CheckCircle, Award, ArrowLeft, ClipboardList, Mic, Check, X, Menu, Settings, Lock, AlertCircle, UserCircle, Bell, Info, Save, Edit2 } from 'lucide-react';
@@ -59,6 +60,7 @@ const StudentPage = () => {
   const [trainingFeedback, setTrainingFeedback] = useState([]);
   const [trainingLoading, setTrainingLoading] = useState(false);
   const [trainingComplete, setTrainingComplete] = useState(false);
+  const [showAptitudeTraining, setShowAptitudeTraining] = useState(false);
   
   // Coding Practice
   const [codingInterfaceOpen, setCodingInterfaceOpen] = useState(false);
@@ -470,6 +472,12 @@ const StudentPage = () => {
     // Special handling for Programming & Coding categories
     if (category === 'programming') {
       setShowProgrammingLanguages(true);
+      return;
+    }
+
+    // Special handling for Aptitude & Reasoning
+    if (category === 'aptitude') {
+      setShowAptitudeTraining(true);
       return;
     }
 
@@ -1222,6 +1230,17 @@ const StudentPage = () => {
                             </div>
                           ))}
                         </div>
+                      </div>
+                    ) : showAptitudeTraining ? (
+                      <div>
+                        <button
+                          onClick={() => setShowAptitudeTraining(false)}
+                          className="mb-6 text-blue-600 hover:text-blue-800 font-medium flex items-center gap-2"
+                        >
+                          <ArrowLeft size={20} />
+                          Back to Categories
+                        </button>
+                        <AptitudeTraining currentStudent={currentStudent} />
                       </div>
                     ) : (
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">

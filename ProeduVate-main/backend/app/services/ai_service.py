@@ -20,10 +20,10 @@ else:
 
 # List of models to try, in order of preference.
 MODEL_CANDIDATES = [
-    'gemini-1.5-flash',
-    'gemini-1.5-pro',
-    'gemini-pro',
-    'gemini-1.0-pro'
+    'models/gemini-2.5-flash',
+    'models/gemini-2.5-pro',
+    'models/gemini-flash-latest',
+    'models/gemini-pro-latest'
 ]
 
 # Configure safety settings to prevent blocking harmless educational content

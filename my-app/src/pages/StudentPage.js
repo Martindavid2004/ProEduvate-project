@@ -4,6 +4,7 @@ import Chatbot from '../components/Chatbot';
 import Modal from '../components/Modal';
 import CodingInterface from '../components/CodingInterface';
 import AptitudeTraining from '../components/AptitudeTraining';
+import GDRound from '../components/GDRound';
 import { useData } from '../context/DataContext';
 import { studentAPI, interviewAPI, chatbotAPI, API_URL } from '../services/api';
 import { FileText, Briefcase, Upload, MessageSquare, Trophy, User, Code, Database, Globe, BarChart3, Network, Cloud, MessageCircle, Users, Users2, Brain, Clock, Target, CheckCircle, Award, ArrowLeft, ClipboardList, Mic, Check, X, Menu, Settings, Lock, AlertCircle, UserCircle, Bell, Info, Save, Edit2 } from 'lucide-react';
@@ -34,6 +35,8 @@ const StudentPage = () => {
   // Interview
   const [interviewModalOpen, setInterviewModalOpen] = useState(false);
   const [interviewMode, setInterviewMode] = useState(null);
+  const [interviewStarting, setInterviewStarting] = useState(false);
+  const [interviewEvaluating, setInterviewEvaluating] = useState(false);
   const [interviewQuestions, setInterviewQuestions] = useState([]);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [userAnswers, setUserAnswers] = useState([]);
@@ -61,6 +64,14 @@ const StudentPage = () => {
   const [trainingLoading, setTrainingLoading] = useState(false);
   const [trainingComplete, setTrainingComplete] = useState(false);
   const [showAptitudeTraining, setShowAptitudeTraining] = useState(false);
+  
+  // GD Round (Group Discussion)
+  const [gdRoundOpen, setGdRoundOpen] = useState(false);
+  const [gdRoundLoading, setGdRoundLoading] = useState(false);
+  const [currentGDRound, setCurrentGDRound] = useState(null);
+  const [submittingAssignments, setSubmittingAssignments] = useState({});
+  const [gdNotifications, setGdNotifications] = useState([]);
+  const [gdResults, setGdResults] = useState([]);
   
   // Coding Practice
   const [codingInterfaceOpen, setCodingInterfaceOpen] = useState(false);
@@ -152,6 +163,8 @@ const StudentPage = () => {
     formData.append('assignment_file', fileInput.files[0]);
     formData.append('student_id', currentStudent.id);
 
+    setSubmittingAssignments(prev => ({ ...prev, [assignmentId]: true }));
+
     try {
       await studentAPI.submitAssignment(currentStudent.id, assignmentId, formData);
       alert('Assignment submitted successfully!');
@@ -160,6 +173,8 @@ const StudentPage = () => {
     } catch (error) {
       console.error('Error submitting assignment:', error);
       alert('Failed to submit assignment.');
+    } finally {
+      setSubmittingAssignments(prev => ({ ...prev, [assignmentId]: false }));
     }
   };
 
@@ -461,7 +476,8 @@ const StudentPage = () => {
 
   const nonTechnicalCategories = [
     { id: 'communication', name: 'Communication Skills', icon: MessageCircle, description: 'Improve verbal and written communication' },
-    { id: 'leadership', name: 'Leadership & Management', icon: Users, description: 'Develop leadership qualities' },
+    { id: 'gd-round', name: 'AI Group Discussion', icon: Users, description: 'Practice GD with AI agents' },
+    { id: 'leadership', name: 'Leadership & Management', icon: Users2, description: 'Develop leadership qualities' },
     { id: 'teamwork', name: 'Teamwork & Collaboration', icon: Users2, description: 'Learn to work effectively in teams' },
     { id: 'problem-solving', name: 'Problem Solving', icon: Brain, description: 'Enhance analytical thinking' },
     { id: 'time-management', name: 'Time Management', icon: Clock, description: 'Learn to manage time efficiently' },
@@ -478,6 +494,12 @@ const StudentPage = () => {
     // Special handling for Aptitude & Reasoning
     if (category === 'aptitude') {
       setShowAptitudeTraining(true);
+      return;
+    }
+
+    // Special handling for GD Round
+    if (category === 'gd-round') {
+      startGDRound();
       return;
     }
 
@@ -583,6 +605,63 @@ const StudentPage = () => {
     setTrainingComplete(false);
   };
 
+  // GD Round Functions
+  const startGDRound = async () => {
+    setGdRoundLoading(true);
+    try {
+      // Fetch available GD topics and create a mock GD round
+      const response = await fetch(`${API_URL}/gd/topics`);
+      const data = await response.json();
+      
+      if (data.success) {
+        // Create a practice GD round
+        const mockGDRound = {
+          _id: 'practice_' + Date.now(),
+          title: 'Practice GD Round',
+          duration: 20, // minutes
+          allow_topic_selection: true,
+          available_topics: data.topics || [],
+          num_ai_agents: 7,
+          ai_agent_voices: ['male', 'female', 'male', 'female', 'male', 'female', 'male'],
+          evaluation_criteria: {
+            communication_skills: { weight: 25, description: "Clarity, articulation, and language proficiency" },
+            leadership: { weight: 20, description: "Initiative taking and group steering ability" },
+            logical_reasoning: { weight: 20, description: "Quality of arguments and critical thinking" },
+            content_relevance: { weight: 20, description: "Knowledge and relevance of points made" },
+            listening_team_dynamics: { weight: 15, description: "Active listening and team collaboration" }
+          },
+          status: 'scheduled'
+        };
+        
+        setCurrentGDRound(mockGDRound);
+        setGdRoundOpen(true);
+      }
+    } catch (error) {
+      console.error('Error starting GD round:', error);
+      alert('Failed to start GD round. Please try again.');
+    } finally {
+      setGdRoundLoading(false);
+    }
+  };
+
+  const handleGDComplete = async (results) => {
+    // Save results locally
+    setGdResults(prev => [...prev, results]);
+    
+    // Could also save to backend here
+    try {
+      // Optional: send results to backend for permanent storage
+      console.log('GD Round completed with results:', results);
+    } catch (error) {
+      console.error('Error saving GD results:', error);
+    }
+  };
+
+  const closeGDRound = () => {
+    setGdRoundOpen(false);
+    setCurrentGDRound(null);
+  };
+
   const speakText = (text) => {
     if (synthRef.current && interviewMode === 'voice') {
       // Cancel any ongoing speech
@@ -598,6 +677,7 @@ const StudentPage = () => {
   };
 
   const startInterview = async (mode) => {
+    setInterviewStarting(true);
     setInterviewMode(mode);
     setInterviewModalOpen(true);
     setCurrentQuestionIndex(0);
@@ -624,6 +704,8 @@ const StudentPage = () => {
       console.error('Error starting interview:', error);
       alert('Failed to start interview.');
       setInterviewModalOpen(false);
+    } finally {
+      setInterviewStarting(false);
     }
   };
 
@@ -737,6 +819,7 @@ const StudentPage = () => {
   };
 
   const handleFinishInterview = async (answers = userAnswers) => {
+    setInterviewEvaluating(true);
     if (timerIntervalRef.current) {
       clearInterval(timerIntervalRef.current);
     }
@@ -759,6 +842,8 @@ const StudentPage = () => {
     } catch (error) {
       console.error('Error evaluating interview:', error);
       alert('Failed to evaluate interview.');
+    } finally {
+      setInterviewEvaluating(false);
     }
   };
 
@@ -986,12 +1071,19 @@ const StudentPage = () => {
                                 type="file"
                                 id={`file-${assignment.id}`}
                                 className="flex-1 text-sm text-gray-600 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+                                disabled={submittingAssignments[assignment.id]}
                               />
                               <button
                                 onClick={() => handleSubmitAssignment(assignment.id)}
-                                className="bg-green-500 hover:bg-green-600 text-white px-6 py-2 rounded-lg font-medium transition-colors"
+                                disabled={submittingAssignments[assignment.id]}
+                                className="bg-green-500 hover:bg-green-600 text-white px-6 py-2 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                               >
-                                Submit
+                                {submittingAssignments[assignment.id] ? (
+                                  <>
+                                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                                    Submitting...
+                                  </>
+                                ) : 'Submit'}
                               </button>
                             </div>
                           )
@@ -1095,9 +1187,15 @@ const StudentPage = () => {
                     <p className="text-gray-600 mb-6">Answer questions by typing your responses</p>
                     <button
                       onClick={() => startInterview('text')}
-                      className="bg-blue-500 hover:bg-blue-600 text-white px-8 py-3 rounded-lg font-medium transition-colors"
+                      disabled={interviewStarting}
+                      className="bg-blue-500 hover:bg-blue-600 text-white px-8 py-3 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 mx-auto"
                     >
-                      Start Text Interview
+                      {interviewStarting ? (
+                        <>
+                          <div className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent"></div>
+                          Starting...
+                        </>
+                      ) : 'Start Text Interview'}
                     </button>
                   </div>
 
@@ -1111,9 +1209,15 @@ const StudentPage = () => {
                     <p className="text-gray-600 mb-6">Answer questions using your voice</p>
                     <button
                       onClick={() => startInterview('voice')}
-                      className="bg-green-500 hover:bg-green-600 text-white px-8 py-3 rounded-lg font-medium transition-colors"
+                      disabled={interviewStarting}
+                      className="bg-green-500 hover:bg-green-600 text-white px-8 py-3 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 mx-auto"
                     >
-                      Start Voice Interview
+                      {interviewStarting ? (
+                        <>
+                          <div className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent"></div>
+                          Starting...
+                        </>
+                      ) : 'Start Voice Interview'}
                     </button>
                   </div>
                 </div>
@@ -1248,20 +1352,21 @@ const StudentPage = () => {
                           <div
                             key={category.id}
                             className="bg-white p-6 rounded-xl shadow-md hover:shadow-xl transition-all cursor-pointer border-2 border-transparent hover:border-blue-500 transform hover:-translate-y-1"
-                            onClick={() => startTraining(category.id)}
+                            onClick={() => !trainingLoading && !gdRoundLoading && startTraining(category.id)}
                           >
-                            <div className="flex justify-center mb-3">
-                              <div className="bg-gradient-to-br from-blue-50 to-indigo-50 p-4 rounded-full">
+                            <div className="flex justify-center mb-4">
+                              <div className="bg-gradient-to-br from-blue-100 to-indigo-100 p-5 rounded-full">
                                 <category.icon className="text-blue-600" size={40} />
                               </div>
                             </div>
                             <h4 className="text-lg font-bold text-gray-800 mb-2 text-center">{category.name}</h4>
-                            <p className="text-sm text-gray-600 text-center mb-4">{category.description}</p>
-                            <div className="flex justify-center">
-                              <button className="bg-gradient-to-r from-blue-500 to-indigo-500 hover:from-blue-600 hover:to-indigo-600 text-white px-4 py-2 rounded-lg font-medium transition-colors text-sm">
-                                Start Session
-                              </button>
-                            </div>
+                            <p className="text-sm text-gray-600 text-center">{category.description}</p>
+                            {(category.id === 'gd-round' && gdRoundLoading) && (
+                              <div className="flex items-center justify-center gap-2 mt-4 text-blue-600">
+                                <div className="animate-spin rounded-full h-5 w-5 border-2 border-blue-600 border-t-transparent"></div>
+                                <span className="text-sm">Loading...</span>
+                              </div>
+                            )}
                           </div>
                         ))}
                       </div>
@@ -2057,13 +2162,22 @@ const StudentPage = () => {
             <div className="flex space-x-3">
               <button
                 onClick={submitAnswer}
-                className="flex-1 bg-blue-500 hover:bg-blue-600 text-white px-6 py-3 rounded-lg font-medium transition-colors"
+                disabled={interviewEvaluating}
+                className="flex-1 bg-blue-500 hover:bg-blue-600 text-white px-6 py-3 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
-                {currentQuestionIndex < interviewQuestions.length - 1 ? 'Next Question' : 'Finish Interview'}
+                {interviewEvaluating ? (
+                  <>
+                    <div className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent"></div>
+                    {currentQuestionIndex < interviewQuestions.length - 1 ? 'Processing...' : 'Evaluating...'}
+                  </>
+                ) : (
+                  currentQuestionIndex < interviewQuestions.length - 1 ? 'Next Question' : 'Finish Interview'
+                )}
               </button>
               <button
                 onClick={skipQuestion}
-                className="px-6 py-3 bg-gray-300 hover:bg-gray-400 text-gray-700 rounded-lg font-medium transition-colors"
+                disabled={interviewEvaluating}
+                className="px-6 py-3 bg-gray-300 hover:bg-gray-400 text-gray-700 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Skip
               </button>
@@ -2099,6 +2213,16 @@ const StudentPage = () => {
           </div>
         )}
       </Modal>
+
+      {/* GD Round Component */}
+      {gdRoundOpen && currentGDRound && (
+        <GDRound
+          gdRound={currentGDRound}
+          studentId={currentStudent.id}
+          onClose={closeGDRound}
+          onComplete={handleGDComplete}
+        />
+      )}
     </div>
   );
 };

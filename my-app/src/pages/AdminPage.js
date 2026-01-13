@@ -37,6 +37,10 @@ const AdminPage = () => {
   const [assignTeacherId, setAssignTeacherId] = useState('');
   const [selectedStudents, setSelectedStudents] = useState([]);
   const [isAssigningStudents, setIsAssigningStudents] = useState(false);
+  const [isDeletingUser, setIsDeletingUser] = useState({});
+  const [isCreatingAssignment, setIsCreatingAssignment] = useState(false);
+  const [isUpdatingTask, setIsUpdatingTask] = useState(false);
+  const [isDeletingTask, setIsDeletingTask] = useState({});
   const [teacherSearchQuery, setTeacherSearchQuery] = useState('');
   const [studentSearchQuery, setStudentSearchQuery] = useState('');
   
@@ -174,12 +178,16 @@ const AdminPage = () => {
   const handleRemoveUser = async (userId) => {
     if (!window.confirm('Are you sure you want to remove this user?')) return;
 
+    setIsDeletingUser(prev => ({ ...prev, [userId]: true }));
     try {
       await adminAPI.removeUser(userId);
       await refreshUsers();
+      alert('User removed successfully!');
     } catch (error) {
       console.error('Error removing user:', error);
       alert('Failed to remove user.');
+    } finally {
+      setIsDeletingUser(prev => ({ ...prev, [userId]: false }));
     }
   };
 
@@ -194,6 +202,7 @@ const AdminPage = () => {
       return;
     }
 
+    setIsCreatingAssignment(true);
     try {
       await adminAPI.createAssignment({
         title: assignmentTitle,
@@ -214,6 +223,8 @@ const AdminPage = () => {
     } catch (error) {
       console.error('Error assigning work:', error);
       alert('Failed to assign work.');
+    } finally {
+      setIsCreatingAssignment(false);
     }
   };
 
@@ -228,6 +239,7 @@ const AdminPage = () => {
       return;
     }
 
+    setIsUpdatingTask(true);
     try {
       await adminAPI.updateTask(editingTask.id, editingTask);
       setEditModalOpen(false);
@@ -237,12 +249,15 @@ const AdminPage = () => {
     } catch (error) {
       console.error('Error updating task:', error);
       alert('Failed to update task.');
+    } finally {
+      setIsUpdatingTask(false);
     }
   };
 
   const handleDeleteTask = async (taskId) => {
     if (!window.confirm('Are you sure you want to delete this task?')) return;
 
+    setIsDeletingTask(prev => ({ ...prev, [taskId]: true }));
     try {
       await adminAPI.deleteTask(taskId);
       await loadAdminTasks();
@@ -250,6 +265,8 @@ const AdminPage = () => {
     } catch (error) {
       console.error('Error deleting task:', error);
       alert('Failed to delete task.');
+    } finally {
+      setIsDeletingTask(prev => ({ ...prev, [taskId]: false }));
     }
   };
 
@@ -403,10 +420,15 @@ const AdminPage = () => {
                                 </button>
                                 <button
                                   onClick={() => handleRemoveUser(user.id)}
-                                  className="text-red-600 hover:text-red-900 hover:bg-red-50 p-2 rounded-lg transition-colors"
+                                  disabled={isDeletingUser[user.id]}
+                                  className="text-red-600 hover:text-red-900 hover:bg-red-50 p-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
                                   title="Remove User"
                                 >
-                                  <Trash2 size={18} />
+                                  {isDeletingUser[user.id] ? (
+                                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-red-600 border-t-transparent"></div>
+                                  ) : (
+                                    <Trash2 size={18} />
+                                  )}
                                 </button>
                               </div>
                             </td>
@@ -767,9 +789,15 @@ const AdminPage = () => {
                     
                     <button
                       onClick={handleAssignWork}
-                      className="w-full bg-green-500 hover:bg-green-600 text-white px-6 py-3 rounded-lg font-medium transition-colors"
+                      disabled={isCreatingAssignment}
+                      className="w-full bg-green-500 hover:bg-green-600 text-white px-6 py-3 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                     >
-                      Assign Work
+                      {isCreatingAssignment ? (
+                        <>
+                          <div className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent"></div>
+                          Assigning...
+                        </>
+                      ) : 'Assign Work'}
                     </button>
                   </div>
                 </div>
@@ -1173,12 +1201,22 @@ const AdminPage = () => {
                             </button>
                             <button
                               onClick={() => handleDeleteTask(task.id)}
-                              className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg font-medium text-sm transition-colors flex items-center gap-2"
+                              disabled={isDeletingTask[task.id]}
+                              className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg font-medium text-sm transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                             >
-                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                              </svg>
-                              Remove
+                              {isDeletingTask[task.id] ? (
+                                <>
+                                  <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                                  Removing...
+                                </>
+                              ) : (
+                                <>
+                                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                  </svg>
+                                  Remove
+                                </>
+                              )}
                             </button>
                           </div>
                         </div>
@@ -1244,9 +1282,15 @@ const AdminPage = () => {
             
             <button
               onClick={handleUpdateTask}
-              className="w-full bg-blue-500 hover:bg-blue-600 text-white px-6 py-3 rounded-lg font-medium transition-colors"
+              disabled={isUpdatingTask}
+              className="w-full bg-blue-500 hover:bg-blue-600 text-white px-6 py-3 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
-              Update Task
+              {isUpdatingTask ? (
+                <>
+                  <div className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent"></div>
+                  Updating...
+                </>
+              ) : 'Update Task'}
             </button>
           </div>
         )}

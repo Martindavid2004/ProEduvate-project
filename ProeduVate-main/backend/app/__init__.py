@@ -38,6 +38,7 @@ def create_app():
     from .routes.chatbot_routes import chatbot_bp
     from .routes.auth_routes import auth_bp
     from .routes.aptitude_routes import aptitude_bp
+    from .routes.gd_routes import gd_bp
 
     app.register_blueprint(admin_bp)
     app.register_blueprint(teacher_bp)
@@ -47,6 +48,7 @@ def create_app():
     app.register_blueprint(chatbot_bp)
     app.register_blueprint(auth_bp)
     app.register_blueprint(aptitude_bp)
+    app.register_blueprint(gd_bp)
 
     @app.route('/resumes/<filename>')
     def uploaded_file(filename):

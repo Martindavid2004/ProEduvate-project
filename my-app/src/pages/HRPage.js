@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Sidebar from '../components/Sidebar';
 import Modal from '../components/Modal';
 import { useData } from '../context/DataContext';
-import { hrAPI } from '../services/api';
-import { Users, Award, FileText, Eye, Search, Filter, Trophy, BarChart3, CheckCircle, Menu } from 'lucide-react';
+import { hrAPI, chatbotAPI, API_URL } from '../services/api';
+import { Users, Award, FileText, Eye, Search, Filter, Trophy, BarChart3, CheckCircle, Menu, Mic, Play, Upload, Settings, Clock, Target, MessageSquare, Loader, Star, TrendingUp, Brain } from 'lucide-react';
 
 const HRPage = () => {
   const [activeTab, setActiveTab] = useState('overview');
@@ -16,6 +16,32 @@ const HRPage = () => {
   const [selectedDepartment, setSelectedDepartment] = useState('all');
   const [sortBy, setSortBy] = useState('atsScore');
   const [studentActions, setStudentActions] = useState({});
+  
+  // AI HR Interview Bot States
+  const [interviewBotOpen, setInterviewBotOpen] = useState(false);
+  const [uploadedResume, setUploadedResume] = useState(null);
+  const [resumeAnalyzing, setResumeAnalyzing] = useState(false);
+  const [resumeAnalysis, setResumeAnalysis] = useState(null);
+  const [interviewConfig, setInterviewConfig] = useState({
+    type: 'general',
+    difficulty: 'medium',
+    duration: 20,
+    stressMode: false
+  });
+  const [interviewStarted, setInterviewStarted] = useState(false);
+  const [currentQuestion, setCurrentQuestion] = useState('');
+  const [questionNumber, setQuestionNumber] = useState(0);
+  const [totalQuestions, setTotalQuestions] = useState(10);
+  const [userAnswer, setUserAnswer] = useState('');
+  const [interviewQuestions, setInterviewQuestions] = useState([]);
+  const [interviewAnswers, setInterviewAnswers] = useState([]);
+  const [isRecording, setIsRecording] = useState(false);
+  const [interviewResults, setInterviewResults] = useState(null);
+  const [interviewLoading, setInterviewLoading] = useState(false);
+  const [questionGenerating, setQuestionGenerating] = useState(false);
+  const [answerSubmitting, setAnswerSubmitting] = useState(false);
+  const recognitionRef = useRef(null);
+  const synthRef = useRef(null);
 
   useEffect(() => {
     fetchAllData();
@@ -57,6 +83,7 @@ const HRPage = () => {
   const sidebarItems = [
     { id: 'overview', label: 'Overview', icon: <BarChart3 size={20} /> },
     { id: 'candidates', label: 'Candidates', icon: <Users size={20} /> },
+    { id: 'ai-interview', label: 'AI Interview Bot', icon: <Brain size={20} /> },
   ];
 
   const students = users.filter(u => u.role === 'student');

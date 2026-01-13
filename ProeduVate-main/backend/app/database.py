@@ -33,3 +33,8 @@ users_collection = db.users
 assignments_collection = db.assignments
 submissions_collection = db.submissions
 teacher_assignments_collection = db.teacher_assignments  # For teacher-created assignments
+
+# GD (Group Discussion) collections
+gd_rounds_collection = db.gd_rounds  # Stores scheduled GD rounds
+gd_results_collection = db.gd_results  # Stores GD results and evaluations
+gd_notifications_collection = db.gd_notifications  # Stores GD notifications for students

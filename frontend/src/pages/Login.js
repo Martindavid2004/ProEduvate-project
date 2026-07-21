@@ -8,6 +8,7 @@ const Login = () => {
   const [password, setPassword] = useState('');
   const [error, setError] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
   const { login } = useAuth();
 
@@ -15,13 +16,13 @@ const Login = () => {
     e.preventDefault();
     setError(false);
     setErrorMessage('');
+    setIsLoading(true);
 
-    // Check if input looks like an email (for registered users) or username (for demo)
     const isEmail = email.includes('@');
     
-    if (isEmail) {
-      // Try database authentication for registered users
-      try {
+    try {
+      if (isEmail) {
+        // Try database authentication for registered users
         const response = await fetch(`${API_URL}/auth/login`, {
           method: 'POST',
           headers: {
@@ -45,17 +46,9 @@ const Login = () => {
           setError(true);
           setErrorMessage(data.message || 'Invalid email or password');
           setPassword('');
-          return;
         }
-      } catch (err) {
-        setError(true);
-        setErrorMessage('Network error. Please check your connection.');
-        setPassword('');
-        return;
-      }
-    } else {
-      // Try demo authentication for username-based login
-      try {
+      } else {
+        // Try demo authentication for username-based login
         const demoResponse = await fetch(`${BACKEND_URL}/login`, {
           method: 'POST',
           headers: {
@@ -84,14 +77,14 @@ const Login = () => {
           setError(true);
           setErrorMessage('Invalid credentials. Please check your username and password.');
           setPassword('');
-          return;
         }
-      } catch (fallbackErr) {
-        setError(true);
-        setErrorMessage('Network error. Please check your connection.');
-        setPassword('');
-        return;
       }
+    } catch (err) {
+      setError(true);
+      setErrorMessage('Network error. Please check your connection.');
+      setPassword('');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -106,7 +99,7 @@ const Login = () => {
               className="h-24 sm:h-28 md:h-32 w-auto"
             />
           </div>
-          <p className="text-black">Learning Management System</p>
+          <p className="text-black font-semibold">Learning Management System</p>
         </div>
 
         <div className="p-8 bg-gray-400">
@@ -121,6 +114,7 @@ const Login = () => {
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="Enter your email or username"
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                disabled={isLoading}
                 required
               />
             </div>
@@ -135,6 +129,7 @@ const Login = () => {
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="Enter password"
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                disabled={isLoading}
                 required
               />
             </div>
@@ -147,9 +142,19 @@ const Login = () => {
 
             <button
               type="submit"
-              className="w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 transition duration-200 font-semibold"
+              disabled={isLoading}
+              className={`w-full bg-indigo-600 text-white py-2.5 px-4 rounded-md hover:bg-indigo-700 transition duration-200 font-semibold flex items-center justify-center gap-2 ${
+                isLoading ? 'opacity-75 cursor-not-allowed' : ''
+              }`}
             >
-              Login
+              {isLoading ? (
+                <>
+                  <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                  <span>Logging in...</span>
+                </>
+              ) : (
+                <span>Login</span>
+              )}
             </button>
           </form>
 
@@ -158,6 +163,7 @@ const Login = () => {
               Don't have an account?{' '}
               <button
                 onClick={() => navigate('/register')}
+                disabled={isLoading}
                 className="font-bold text-indigo-600 hover:text-indigo-700 underline transition-colors"
               >
                 Register here

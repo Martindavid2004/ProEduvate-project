@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Brain, BookOpen, Target, Trophy, Clock, Camera, AlertCircle, CheckCircle, XCircle, Play, Pause, Video } from 'lucide-react';
+import { Brain, BookOpen, Target, Trophy, Clock, Camera, AlertCircle, CheckCircle, XCircle, Video } from 'lucide-react';
 import { API_URL } from '../services/api';
 
 const AptitudeTraining = ({ currentStudent }) => {
@@ -26,6 +26,7 @@ const AptitudeTraining = ({ currentStudent }) => {
   useEffect(() => {
     fetchTopics();
     fetchProgress();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Timer for test
@@ -43,6 +44,7 @@ const AptitudeTraining = ({ currentStudent }) => {
       }, 1000);
     }
     return () => clearInterval(timerIntervalRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [testStarted]);
 
   // Camera monitoring

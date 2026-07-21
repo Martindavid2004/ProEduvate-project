@@ -1,8 +1,11 @@
 # example netlify.toml
 [build]
-  command = "cd frontend && npm ci && npm run build"
+  command = "cd frontend && npm ci && CI=false npm run build"
   functions = "netlify/functions"
   publish = "frontend/build"
+
+[build.environment]
+  CI = "false"
 
   ## Uncomment to use this redirect for Single Page Applications like create-react-app.
   ## Not needed for static site generators.

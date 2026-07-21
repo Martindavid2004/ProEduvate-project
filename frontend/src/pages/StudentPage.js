@@ -70,11 +70,14 @@ const StudentPage = () => {
   const [gdRoundLoading, setGdRoundLoading] = useState(false);
   const [currentGDRound, setCurrentGDRound] = useState(null);
   const [submittingAssignments, setSubmittingAssignments] = useState({});
+  // eslint-disable-next-line no-unused-vars
   const [gdNotifications, setGdNotifications] = useState([]);
+  // eslint-disable-next-line no-unused-vars
   const [gdResults, setGdResults] = useState([]);
   
   // Coding Practice
   const [codingInterfaceOpen, setCodingInterfaceOpen] = useState(false);
+  // eslint-disable-next-line no-unused-vars
   const [codingLanguage, setCodingLanguage] = useState('python');
   const [showProgrammingLanguages, setShowProgrammingLanguages] = useState(false); // 'python' or 'c';
   
@@ -482,6 +485,7 @@ const StudentPage = () => {
         })
       });
 
+      // eslint-disable-next-line no-unused-vars
       const data = await response.json();
 
       if (response.ok) {

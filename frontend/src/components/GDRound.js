@@ -16,6 +16,7 @@ const GDRound = ({ gdRound, studentId, onClose, onComplete }) => {
   const [micEnabled, setMicEnabled] = useState(false);
   const [volumeEnabled, setVolumeEnabled] = useState(true);
   const [results, setResults] = useState(null);
+  // eslint-disable-next-line no-unused-vars
   const [loading, setLoading] = useState(false);
   const [recognitionActive, setRecognitionActive] = useState(false);
   
@@ -94,6 +95,7 @@ const GDRound = ({ gdRound, studentId, onClose, onComplete }) => {
     }
     
     return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, topicSelectionTimer, preparationTimer, gdTimer]);
   
   // Initialize camera and microphone

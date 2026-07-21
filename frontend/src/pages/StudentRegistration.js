@@ -4,6 +4,7 @@ import { User, Mail, Lock, Eye, EyeOff, ChevronRight, CheckCircle, AlertCircle, 
 import { API_URL } from '../services/api';
 
 const StudentRegistration = () => {
+  // eslint-disable-next-line no-unused-vars
   const navigate = useNavigate();
   const [formData, setFormData] = useState({
     fullName: '',

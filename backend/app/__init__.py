@@ -54,6 +54,14 @@ def create_app():
     def uploaded_file(filename):
         return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
+    @app.route('/')
+    def root():
+        return jsonify({
+            "status": "online",
+            "app": "ProEduVate LMS Backend API",
+            "health": "/api/health"
+        }), 200
+
     @app.route('/health')
     def health_check():
         return "Server is running!", 200
@@ -61,6 +69,13 @@ def create_app():
     @app.route('/api/health')
     def api_health_check():
         return jsonify({"status": "ok", "message": "API is running"}), 200
+
+    @app.errorhandler(404)
+    def not_found_error(error):
+        return jsonify({
+            "error": "Endpoint not found",
+            "message": "The requested API endpoint does not exist."
+        }), 404
 
     return app
 

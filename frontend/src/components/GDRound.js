@@ -85,6 +85,19 @@ const GDRound = ({ gdRound, studentId, onClose, onComplete }) => {
   const MAX_OFF_TOPIC_INTERVENTIONS = 3;
   const offTopicInterventionsRef = useRef(0);
   const [offTopicHint, setOffTopicHint] = useState(false);
+
+  // ---- Microphone health / conflict detection (Meet/Zoom/Teams coexistence) ----
+  // When another app holds the mic (exclusive mode) or the OS mutes it, the
+  // audio track reports 'mute'/'ended' or the stream goes permanently silent.
+  // We detect all three, warn the user, and auto-recover the stream.
+  const [micIssue, setMicIssue] = useState(null);
+  const micUnhealthyRef = useRef(false);
+  const micRecoveringRef = useRef(false);
+  const micWatchersRef = useRef([]);      // {track, ev, fn} for cleanup
+  const audioCtxRef = useRef(null);       // AudioContext for silence watchdog
+  const analyserRef = useRef(null);       // {src, analyser}
+  const silenceWatchdogRef = useRef(null);
+  const silenceStartRef = useRef(null);
   // Turn IDs whose user response was already added/submitted - prevents the
   // same transcript being stored twice (e.g. a late Whisper result re-entering
   // the submit flow for a turn that already completed).
@@ -208,6 +221,11 @@ const GDRound = ({ gdRound, studentId, onClose, onComplete }) => {
     const synth = synthRef.current;
     return () => {
       stopAllMediaTracks();
+      stopSilenceWatchdog();
+      micWatchersRef.current.forEach(({ ev, fn }) => {
+        try { ev.removeEventListener('mute', fn); ev.removeEventListener('ended', fn); } catch (e) {}
+      });
+      micWatchersRef.current = [];
       if (speakingTimeoutRef.current) clearTimeout(speakingTimeoutRef.current);
       if (aiSpeakingTimeoutRef.current) clearTimeout(aiSpeakingTimeoutRef.current);
       if (nextSpeakerTimerRef.current) clearTimeout(nextSpeakerTimerRef.current);
@@ -317,6 +335,252 @@ const GDRound = ({ gdRound, studentId, onClose, onComplete }) => {
     }
   };
 
+  // ---- Microphone health monitoring & auto-recovery ----
+
+  // Acquire a fresh mic stream using the same escalating constraint strategy
+  // as initializeMedia (video+audio -> audio-only constrained -> audio-only).
+  const acquireMicStream = async () => {
+    const speechAudioConstraints = {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+      channelCount: 1,
+      sampleRate: 48000,
+    };
+    try {
+      return await navigator.mediaDevices.getUserMedia({ video: true, audio: speechAudioConstraints });
+    } catch (camErr) {
+      console.warn('[MIC_HEALTH] video+audio re-acquire failed:', camErr?.name);
+    }
+    try {
+      return await navigator.mediaDevices.getUserMedia({ audio: speechAudioConstraints });
+    } catch (audioErr) {
+      console.warn('[MIC_HEALTH] audio re-acquire failed:', audioErr?.name);
+    }
+    return navigator.mediaDevices.getUserMedia({ audio: true });
+  };
+
+  // Tear down old stream/watchers and swap in a fresh mic stream. Safe to
+  // call mid-turn; if the recorder died with the old track, a new one is
+  // started so the CURRENT turn keeps recording.
+  const restoreMicrophone = async () => {
+    if (micRecoveringRef.current) return;
+    micRecoveringRef.current = true;
+    try {
+      console.log('[MIC_HEALTH] Restoring microphone - re-acquiring stream from OS');
+      const newStream = await acquireMicStream();
+
+      // Stop all old tracks AFTER a new stream is in hand (never lose the mic)
+      if (mediaStreamRef.current) {
+        mediaStreamRef.current.getTracks().forEach(t => { try { t.stop(); } catch (e) {} });
+      }
+      if (audioStreamRef.current) {
+        audioStreamRef.current.getTracks().forEach(t => { try { t.stop(); } catch (e) {} });
+      }
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        try { mediaRecorderRef.current.stop(); } catch (e) {}
+      }
+
+      mediaStreamRef.current = newStream;
+      const audioTracks = newStream.getAudioTracks();
+      audioStreamRef.current = audioTracks.length > 0 ? new MediaStream(audioTracks) : null;
+
+      if (videoRef.current) videoRef.current.srcObject = newStream;
+      setCameraEnabled(newStream.getVideoTracks().length > 0);
+      setMicEnabled(audioTracks.length > 0);
+
+      watchMicTracks();
+      startSilenceWatchdog();
+
+      // Mid-turn recovery: restart the recorder on the fresh audio stream so
+      // the current turn keeps capturing into Whisper.
+      if (turnStateRef.current === 'RECORDING_USER' && currentSpeakerRef.current === 'user') {
+        const ok = ensureRecorderStarted();
+        console.log(`[MIC_HEALTH] Mid-turn recorder restart: ${ok ? 'OK' : 'FAILED'}`);
+        if (sttModeRef.current === 'browser' && recognitionRef.current && !browserSTTFailedRef.current) {
+          try { recognitionRef.current.start(); setRecognitionActive(true); recognitionActiveRef.current = true; } catch (e) {}
+        }
+      }
+
+      micUnhealthyRef.current = false;
+      setMicIssue(null);
+      setSttError(null);
+      console.log('[MIC_HEALTH] Microphone restored successfully');
+    } catch (err) {
+      console.error('[MIC_HEALTH] Microphone restore failed:', err);
+      micUnhealthyRef.current = true;
+      setMicIssue(err?.name === 'NotReadableError'
+        ? 'Your microphone is being used by another app (Google Meet/Zoom/Teams). GD speech-to-text cannot run at the same time.'
+        : 'Could not re-access the microphone. Check Windows sound settings and browser permission, then press Restore Microphone.');
+      setSttState('ERROR');
+    } finally {
+      micRecoveringRef.current = false;
+    }
+  };
+
+  // listen for track-level mute/ended: the OS-level signals that another app
+  // took the mic or muted it system-wide.
+  const watchMicTracks = () => {
+    // Remove previous listeners first
+    micWatchersRef.current.forEach(({ ev, fn }) => {
+      try { ev.removeEventListener('mute', fn); ev.removeEventListener('ended', fn); } catch (e) {}
+    });
+    micWatchersRef.current = [];
+
+    const tracks = [
+      ...(mediaStreamRef.current?.getAudioTracks() || []),
+      ...(audioStreamRef.current?.getAudioTracks() || []),
+    ];
+    const seen = new Set();
+    tracks.forEach(track => {
+      if (seen.has(track)) return;
+      seen.add(track);
+      const onProblem = (what) => () => {
+        console.warn(`[MIC_HEALTH] Audio track ${what} - another app may have taken the mic`);
+        micUnhealthyRef.current = true;
+        setMicIssue(what === 'muted'
+          ? 'Your microphone was muted at the system level or taken over by another app (Google Meet/Zoom/Teams). Speaking is not being captured.'
+          : 'Your microphone track ended - another app (Google Meet/Zoom/Teams) may have taken exclusive control of it.');
+        if (turnStateRef.current === 'RECORDING_USER' && currentSpeakerRef.current === 'user') {
+          setSttError('Microphone interrupted by another app. Trying to restore it...');
+        }
+      };
+      const muteFn = onProblem('muted');
+      const endedFn = onProblem('ended');
+      track.addEventListener('mute', muteFn);
+      track.addEventListener('ended', endedFn);
+      micWatchersRef.current.push({ ev: track, fn: muteFn });
+      micWatchersRef.current.push({ ev: track, fn: endedFn });
+      if (track.muted) { micUnhealthyRef.current = true; setMicIssue('Your microphone is muted at the system level or held by another app.'); }
+    });
+  };
+
+  // Silence watchdog: measures real mic energy via WebAudio. A PERMANENTLY
+  // silent track (even while 'live') is the signature of another app holding
+  // the mic in exclusive mode or the OS routing audio elsewhere.
+  const startSilenceWatchdog = () => {
+    stopSilenceWatchdog();
+    if (!audioStreamRef.current || !window.AudioContext) return;
+    try {
+      const ctx = new AudioContext();
+      const src = ctx.createMediaStreamSource(audioStreamRef.current);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 512;
+      src.connect(analyser);
+      audioCtxRef.current = ctx;
+      analyserRef.current = { src, analyser };
+      const buf = new Uint8Array(analyser.frequencyBinCount);
+      silenceStartRef.current = null;
+      silenceWatchdogRef.current = setInterval(() => {
+        try {
+          // Layer 1: track liveness poll. NOTE: programmatic track.stop() and
+          // some OS device steals do NOT fire 'ended' on the track object, so
+          // a readyState check is required to catch every path.
+          const tracks = audioStreamRef.current?.getAudioTracks() || [];
+          const anyLive = tracks.some(t => t.readyState === 'live');
+          const anyMuted = tracks.some(t => t.muted);
+          if (tracks.length > 0 && !anyLive) {
+            // Re-assert on every tick so a stale-buffer "energy" reading can
+            // never clear this state while the track is dead.
+            if (!micUnhealthyRef.current) {
+              console.warn('[MIC_HEALTH] Audio track no longer live (readyState ended) - mic was taken/muted by another app or OS');
+            }
+            micUnhealthyRef.current = true;
+            setMicIssue('Your microphone was taken over or muted by another app (Google Meet/Zoom/Teams) or the system. Press Restore Microphone to re-acquire it.');
+            if (turnStateRef.current === 'RECORDING_USER' && currentSpeakerRef.current === 'user') {
+              setSttError('Microphone interrupted by another app. Press Restore Microphone.');
+            }
+            return; // no live track -> energy data is meaningless, stop here
+          }
+          if (anyMuted && !micUnhealthyRef.current) {
+            micUnhealthyRef.current = true;
+            console.warn('[MIC_HEALTH] Audio track reports muted');
+            setMicIssue('Your microphone is muted at the system level or held by another app (Google Meet/Zoom/Teams).');
+            return;
+          }
+
+          // Layer 2: energy silence check (exclusive capture can keep tracks
+          // 'live' but deliver permanent silence).
+          analyser.getByteFrequencyData(buf);
+          let sum = 0;
+          for (let i = 0; i < buf.length; i++) sum += buf[i];
+          const active = sum > 0;
+          if (active) {
+            silenceStartRef.current = null;
+            if (micUnhealthyRef.current && anyLive) {
+              // Real audio flowing on a live track - conflict resolved
+              micUnhealthyRef.current = false;
+              setMicIssue(null);
+              console.log('[MIC_HEALTH] Mic audio flowing again - conflict resolved');
+            }
+            return;
+          }
+          // Permanently silent (no OS audio at all)
+          if (!silenceStartRef.current) silenceStartRef.current = Date.now();
+          if (Date.now() - silenceStartRef.current > 20000 && !micUnhealthyRef.current) {
+            micUnhealthyRef.current = true;
+            console.warn('[MIC_HEALTH] Mic permanently silent for 20s - probable exclusive capture by another app');
+            setMicIssue('No audio is reaching the GD from your microphone for a while. Another app (Google Meet/Zoom/Teams) may be holding the mic exclusively, or it is muted in Windows sound settings.');
+            if (turnStateRef.current === 'RECORDING_USER' && currentSpeakerRef.current === 'user') {
+              setSttError('Microphone appears silent - another app may be using it. Trying to restore...');
+            }
+          }
+        } catch (e) { /* analyser closed */ }
+      }, 2000);
+      console.log('[MIC_HEALTH] Silence watchdog started');
+    } catch (e) {
+      console.warn('[MIC_HEALTH] Silence watchdog unavailable:', e);
+    }
+  };
+
+  const stopSilenceWatchdog = () => {
+    if (silenceWatchdogRef.current) {
+      clearInterval(silenceWatchdogRef.current);
+      silenceWatchdogRef.current = null;
+    }
+    if (analyserRef.current) {
+      try { analyserRef.current.src.disconnect(); } catch (e) {}
+      analyserRef.current = null;
+    }
+    if (audioCtxRef.current) {
+      try { audioCtxRef.current.close(); } catch (e) {}
+      audioCtxRef.current = null;
+    }
+    silenceStartRef.current = null;
+  };
+
+  // Auto-recover the mic when the user returns to this tab: browsers mute/
+  // suspend capture or hand the device back after conflicts; a fresh
+  // getUserMedia re-establishes a healthy stream. Only when unhealthy.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible' && micUnhealthyRef.current && !micRecoveringRef.current) {
+        console.log('[MIC_HEALTH] Tab visible again with unhealthy mic - auto-restoring');
+        restoreMicrophone();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // React to live device changes (user picks another mic / OS re-enumerates
+  // after another app releases it).
+  useEffect(() => {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.addEventListener) return undefined;
+    const onDeviceChange = () => {
+      console.log('[MIC_HEALTH] Device change detected');
+      if (micUnhealthyRef.current && !micRecoveringRef.current) {
+        setTimeout(() => {
+          if (micUnhealthyRef.current && !micRecoveringRef.current) restoreMicrophone();
+        }, 500);
+      }
+    };
+    navigator.mediaDevices.addEventListener('devicechange', onDeviceChange);
+    return () => navigator.mediaDevices.removeEventListener('devicechange', onDeviceChange);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Initialize camera and microphone
   const initializeMedia = async () => {
     // Speech-optimized audio constraints. All keys are IDEAL (not exact), so
@@ -340,6 +604,8 @@ const GDRound = ({ gdRound, studentId, onClose, onComplete }) => {
         console.warn('Camera + mic request failed, falling back to audio-only stream:', camErr);
         if (camErr && camErr.name === 'NotReadableError') {
           // Typically means another app is holding the camera/microphone
+          micUnhealthyRef.current = true;
+          setMicIssue('Your microphone is being used by another app (Google Meet/Zoom/Teams). GD speech-to-text cannot run at the same time - close the other call or press Restore Microphone once it is free.');
           setSttError('Your mic/camera appears to be in use by another app (Zoom/Meet/Teams). Close it or pick another mic, then reload this page.');
         }
         try {
@@ -354,6 +620,12 @@ const GDRound = ({ gdRound, studentId, onClose, onComplete }) => {
       if (videoRef.current) videoRef.current.srcObject = stream;
       setCameraEnabled(stream.getVideoTracks().length > 0);
       setMicEnabled(true);
+      // A usable stream was obtained - clear any conflict flag raised by an
+      // earlier failed attempt (e.g. camera busy but mic fine).
+      if (stream.getAudioTracks().some(t => t.readyState === 'live')) {
+        micUnhealthyRef.current = false;
+        setMicIssue(null);
+      }
 
       // Dedicated audio-only stream for MediaRecorder to avoid container issues
       const audioTracks = stream.getAudioTracks();
@@ -384,6 +656,11 @@ const GDRound = ({ gdRound, studentId, onClose, onComplete }) => {
         console.warn('MediaRecorder not supported on this browser');
         setSttError('Audio recording is not supported in this browser.');
       }
+
+      // Mic health monitoring: track-level mute/ended events + silence
+      // watchdog so conflicts with Meet/Zoom/Teams are detected & recovered.
+      watchMicTracks();
+      startSilenceWatchdog();
       // NOTE: a fresh MediaRecorder is created for every speaking turn via
       // ensureRecorderStarted() (see above). Do NOT construct one here.
     } catch (error) {
@@ -392,6 +669,11 @@ const GDRound = ({ gdRound, studentId, onClose, onComplete }) => {
       if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
         setSttError('Microphone permission denied. Please allow microphone access or type manually.');
       } else if (error.name === 'NotReadableError') {
+        // Another app (Meet/Zoom/Teams) is holding the mic RIGHT NOW - show
+        // the actionable banner with the Restore Microphone button so the
+        // user can recover the moment the other app releases it.
+        micUnhealthyRef.current = true;
+        setMicIssue('Your microphone is being used by another app (Google Meet/Zoom/Teams). Close that call, then press Restore Microphone.');
         setSttError('Your microphone is being used by another app (Zoom/Meet/Teams/Discord). Close it or pick another mic, then reload.');
       } else {
         setSttError('Could not access microphone. Please check your audio settings.');
@@ -1497,6 +1779,27 @@ const GDRound = ({ gdRound, studentId, onClose, onComplete }) => {
                     </div>
                   )}
                 </div>
+
+                {/* Mic conflict / health banner - ALWAYS visible in the active phase
+                    (not just during the user's turn): another app taking the mic can
+                    happen while an AI agent is speaking too. */}
+                {micIssue && (
+                  <div className="mb-4 p-4 bg-red-50 border-2 border-red-300 rounded-lg flex items-start gap-3 text-red-900">
+                    <MicOff className="h-5 w-5 flex-shrink-0 text-red-600 mt-0.5" />
+                    <div className="flex-1">
+                      <p className="font-bold">Microphone problem detected</p>
+                      <p className="text-sm mt-0.5">{micIssue}</p>
+                      <button
+                        type="button"
+                        onClick={restoreMicrophone}
+                        className="mt-2 flex items-center gap-2 px-3 py-1.5 rounded-lg text-white font-medium text-xs transition bg-red-600 hover:bg-red-700 active:scale-95"
+                      >
+                        <Mic className="h-3.5 w-3.5" />
+                        Restore Microphone
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 {/* Current Speaker Indicator */}
                 <div className="bg-blue-50 p-4 rounded-lg">

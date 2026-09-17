@@ -30,11 +30,33 @@ const api = axios.create({
   withCredentials: true,
 });
 
-// Automatically set Content-Type based on request data
+// Automatically set Content-Type and Authorization token based on request data
 api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('authToken');
+  if (token) {
+    config.headers['Authorization'] = `Bearer ${token}`;
+    // Debug log for GD endpoints
+    if (config.url.includes('/gd/')) {
+      console.log(`[API] GD ${config.method?.toUpperCase() || 'GET'} ${config.url} with token`);
+    }
+  } else {
+    // Debug log for GD endpoints when no token (never print the token itself)
+    if (config.url.includes('/gd/')) {
+      console.warn('[API] GD request WITHOUT token!');
+      console.warn('[API] localStorage user:', localStorage.getItem('user'));
+    }
+  }
   if (config.data instanceof FormData) {
     // Let browser set Content-Type with correct boundary for FormData
-    delete config.headers['Content-Type'];
+    if (config.headers) {
+      if (typeof config.headers.delete === 'function') {
+        config.headers.delete('Content-Type');
+        config.headers.delete('content-type');
+      } else {
+        delete config.headers['Content-Type'];
+        delete config.headers['content-type'];
+      }
+    }
   } else {
     config.headers['Content-Type'] = 'application/json';
   }
@@ -98,6 +120,44 @@ export const chatbotAPI = {
 // HR API calls
 export const hrAPI = {
   getCandidates: () => api.get('/hr/candidates'),
+};
+
+// Group Discussion (GD) API calls
+export const gdAPI = {
+  getTopics: () => api.get('/gd/topics'),
+  getCriteria: () => api.get('/gd/evaluation-criteria'),
+  scheduleRound: (data) => api.post('/gd/schedule', data),
+  schedulePracticeRound: (data) => api.post('/gd/practice-round', data),
+  getRounds: () => api.get('/gd/rounds'),
+  getStudentRounds: (studentId) => api.get(`/gd/student/${studentId}/rounds`),
+  getNotifications: (studentId) => api.get(`/gd/notifications/${studentId}`),
+  markNotificationRead: (id) => api.put(`/gd/notifications/${id}/mark-read`),
+  getRoundDetails: (id) => api.get(`/gd/round/${id}`),
+  selectTopic: (id, topic) => api.post(`/gd/round/${id}/select-topic`, { topic }),
+  startRound: (id) => api.post(`/gd/round/${id}/start`),
+  submitResponse: (id, response_text, duration = 0) => api.post(`/gd/round/${id}/submit-response`, { response_text, duration }),
+  evaluateRound: (id) => api.post(`/gd/round/${id}/evaluate`),
+  getStudentResults: (studentId) => api.get(`/gd/results/${studentId}`),
+  getConfig: () => api.get('/gd/admin/config'),
+  updateConfig: (data) => api.post('/gd/admin/config', data),
+  getAgentResponse: (data) => api.post('/gd/agent-response', data),
+  transcribeAudio: (audioBlob) => {
+    console.log('[GD API] transcribeAudio called');
+    const endpoint = `${API_URL}/gd/transcribe`;
+    console.log('[GD API] endpoint:', endpoint);
+    console.log('[GD API] blob size:', audioBlob ? audioBlob.size : 0);
+    console.log('[GD API] blob type:', audioBlob ? audioBlob.type : 'unknown');
+
+    const formData = new FormData();
+    const mime = (audioBlob && audioBlob.type) || 'audio/webm';
+    let ext = 'webm';
+    if (mime.includes('mp4')) ext = 'mp4';
+    else if (mime.includes('ogg')) ext = 'ogg';
+    else if (mime.includes('wav')) ext = 'wav';
+    formData.append('audio', audioBlob, `speech.${ext}`);
+
+    return api.post('/gd/transcribe', formData);
+  },
 };
 
 export default api;

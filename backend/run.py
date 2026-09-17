@@ -1,4 +1,5 @@
 import os
+import threading
 from dotenv import load_dotenv
 import google.generativeai as genai
 from app import create_app
@@ -13,12 +14,14 @@ genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
 
 # Helper function to find a working model for the single /ask-ai route
 def generate_safe_response(prompt):
-    candidates = ['gemini-2.5-flash', 'gemini-flash-latest', 'gemini-2.5-pro', 'gemini-pro-latest']
+    candidates = ['gemini-flash-lite-latest', 'gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-pro-latest']
     for model_name in candidates:
         try:
             model = genai.GenerativeModel(model_name)
             response = model.generate_content(prompt)
-            return response.text
+            if response and hasattr(response, 'text') and response.text and len(response.text.strip()) >= 15:
+                return response.text
+            continue
         except Exception as e:
             if "404" in str(e) or "not found" in str(e).lower():
                 continue
@@ -26,7 +29,30 @@ def generate_safe_response(prompt):
     return "Error: No AI models available. Check your API key."
 
 app = create_app()
-# CORS is already configured in create_app() with credentials support 
+# CORS is already configured in create_app() with credentials support
+
+# Preload the Whisper STT model in the background so the first /api/gd/transcribe
+# request doesn't stall for 30-60s (model download + init) while the frontend is
+# waiting on a speaking turn. The preload retries: transient network failures
+# during a HuggingFace model download (WinError 10053/10060) previously left the
+# app with no model and every transcribe call failing.
+import time
+
+def _preload_whisper(retries=3, delay_seconds=5):
+    for attempt in range(1, retries + 1):
+        try:
+            from app.services.stt_service import stt_service
+            stt_service.load_model()
+            stt_service.warmup()
+            print("[STT] Whisper model preloaded and warmed up.")
+            return
+        except Exception as e:
+            print(f"[STT] Whisper preload attempt {attempt}/{retries} failed: {e}")
+            if attempt < retries:
+                time.sleep(delay_seconds)
+    print("[STT] Whisper preload skipped - model will load lazily on first request.")
+
+threading.Thread(target=_preload_whisper, daemon=True).start()
 
 # Use environment variable for secret key, generate random one if not set
 app.secret_key = os.getenv('SECRET_KEY', os.urandom(24).hex())
@@ -53,7 +79,22 @@ def login():
     if username in DEMO_CREDENTIALS and DEMO_CREDENTIALS[username] == password:
         session['user_role'] = username
         session['username'] = username
-        return jsonify({'success': True, 'redirect': f'/{username}'})
+        
+        # Generate JWT token for demo user
+        from app.routes.auth_routes import generate_jwt_token
+        token = generate_jwt_token(username, f"{username}@demo.com", username)
+        
+        return jsonify({
+            'success': True,
+            'token': token,
+            'user': {
+                'id': username,
+                'name': username.capitalize(),
+                'email': f"{username}@demo.com",
+                'role': username
+            },
+            'redirect': f'/{username}'
+        })
     
     return jsonify({'success': False, 'message': 'Invalid credentials'})
 
@@ -127,4 +168,7 @@ def ask_ai():
         return jsonify({'success': False, 'message': str(e)})
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True, use_reloader=False)
+    # use_reloader=False: the Werkzeug reloader imports this module in TWO
+    # processes (parent + child), which used to download/load the Whisper model
+    # twice and spam 'OSError: [WinError 10038]' socket noise on every restart.
+    app.run(host='0.0.0.0', port=5000, debug=True, use_reloader=False)

@@ -1,0 +1,33 @@
+name: Attach backup zip to release
+
+# Builds the light project zip and attaches it to a GitHub Release.
+# Can also be triggered manually (zip is built but not attached anywhere).
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  attach-zip:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Create light backup zip
+        run: python make_backup_zip.py --out project-backup.zip
+
+      - name: Attach zip to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: project-backup.zip

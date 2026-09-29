@@ -38,8 +38,9 @@ const Login = () => {
           // Store JWT token and user data
           localStorage.setItem('authToken', data.token);
           localStorage.setItem('user', JSON.stringify(data.user));
+          console.log('[Login] Email token stored:', data.token.substring(0, 30) + '...');
           
-          login(data.user.name, data.user.role);
+          login(data.user);
           navigate(data.redirect);
           return;
         } else {
@@ -70,7 +71,16 @@ const Login = () => {
           };
           localStorage.setItem('user', JSON.stringify(demoUser));
           
-          login(email, email);
+          // Store JWT token for demo accounts too
+          if (demoData.token) {
+            localStorage.setItem('authToken', demoData.token);
+            // SECURITY: never log JWT tokens (even partially) to the console.
+            console.log('[Login] Demo token stored: <redacted>');
+          } else {
+            console.error('[Login] WARNING: No token received from demo login!');
+          }
+          
+          login(demoUser);
           navigate(demoData.redirect);
           return;
         } else {

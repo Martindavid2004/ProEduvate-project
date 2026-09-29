@@ -87,6 +87,25 @@ export const teacherAPI = {
   markTaskComplete: (taskId) => api.post(`/teacher/admin_tasks/${taskId}/complete`),
 };
 
+// Assessment API calls (teacher-assigned MCQ assessments + training MCQs).
+// Shared helpers: server-side expiry countdown + automatic failure (tab switch / time expiry).
+export const assessmentAPI = {
+  startTeacherQuiz: (assignmentId, studentId, retake = false) =>
+    api.post(`/teacher/assignments/${assignmentId}/assessment/start`, { student_id: studentId, retake }),
+  // Training-section test attempt state for a topic (Start / Resume / Retake
+  // decision + last result). Never starts an attempt.
+  aptitudeTestStatus: (studentId, topic) =>
+    api.get('/aptitude/test/status', { params: { student_id: studentId, topic } }),
+  teacherQuizStatus: (assignmentId, studentId) =>
+    api.get(`/teacher/assignments/${assignmentId}/assessment/status`, { params: { student_id: studentId } }),
+  failTeacherQuiz: (assignmentId, studentId, reason) =>
+    api.post(`/teacher/assignments/${assignmentId}/assessment/fail`, { student_id: studentId, reason }),
+  submitTeacherQuiz: (assignmentId, payload) =>
+    api.post(`/teacher/assignments/${assignmentId}/assessment/submit`, payload),
+  failAptitude: (testId, reason, extra = {}) =>
+    api.post('/aptitude/test/fail', { test_id: testId, reason, ...extra }),
+};
+
 // Student API calls
 export const studentAPI = {
   getAssignments: (studentId) => api.get(`/student/${studentId}/assignments`),
@@ -105,6 +124,22 @@ export const studentAPI = {
 export const interviewAPI = {
   startInterview: (data = {}) => api.post('/interview/start', data),
   submitAnswers: (answersData) => api.post('/interview/evaluate', answersData),
+  saveAnswer: (data) => api.post('/interview/answer', data),
+  getSession: (sessionId) => api.get(`/interview/session/${sessionId}`),
+  // Voice-mode speech-to-text: REUSES the existing /gd/transcribe endpoint,
+  // which serves the shared faster-whisper singleton (stt_service.py).
+  // No second Whisper model/service is created. Response contract (same as
+  // GDRound): { success, transcript, text, status, message?, warning? }.
+  transcribeAudio: (audioBlob) => {
+    const formData = new FormData();
+    const mime = (audioBlob && audioBlob.type) || 'audio/webm';
+    let ext = 'webm';
+    if (mime.includes('mp4')) ext = 'mp4';
+    else if (mime.includes('ogg')) ext = 'ogg';
+    else if (mime.includes('wav')) ext = 'wav';
+    formData.append('audio', audioBlob, `speech.${ext}`);
+    return api.post('/gd/transcribe', formData);
+  },
 };
 
 // Chatbot API calls
@@ -113,8 +148,8 @@ export const chatbotAPI = {
     const message = typeof promptOrObj === 'string' ? promptOrObj : (promptOrObj.message || promptOrObj.prompt || JSON.stringify(promptOrObj));
     return api.post('/chatbot/general_query', { prompt: message });
   },
-  generateQuiz: (topic, numQuestions) => 
-    api.post('/chatbot/generate_quiz', { topic, num_questions: numQuestions }),
+  generateQuiz: (topic, numQuestions, categories = [], source = 'bank') => 
+    api.post('/chatbot/generate_quiz', { topic, num_questions: numQuestions, categories, source }),
 };
 
 // HR API calls

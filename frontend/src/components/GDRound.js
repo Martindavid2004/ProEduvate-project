@@ -86,18 +86,27 @@ const GDRound = ({ gdRound, studentId, onClose, onComplete }) => {
   const offTopicInterventionsRef = useRef(0);
   const [offTopicHint, setOffTopicHint] = useState(false);
 
-  // ---- Microphone health / conflict detection (Meet/Zoom/Teams coexistence) ----
-  // When another app holds the mic (exclusive mode) or the OS mutes it, the
-  // audio track reports 'mute'/'ended' or the stream goes permanently silent.
-  // We detect all three, warn the user, and auto-recover the stream.
+  // ---- Microphone state ----
+  // IMPORTANT: the previous "mic health / conflict detection" layer (silence
+  // watchdog + track.mute/ended banner) blamed Google Meet/Zoom/Teams for the
+  // mic failing even when getUserMedia succeeded and the track was live — a
+  // 20 s quiet period or a benign track.muted event was treated as "another
+  // app holds the mic". That false banner is REMOVED. The UI now only shows
+  // an error when the browser microphone API actually fails, and shows the
+  // REAL error (NotAllowedError / NotFoundError / NotReadableError / etc.).
   const [micIssue, setMicIssue] = useState(null);
-  const micUnhealthyRef = useRef(false);
   const micRecoveringRef = useRef(false);
-  const micWatchersRef = useRef([]);      // {track, ev, fn} for cleanup
-  const audioCtxRef = useRef(null);       // AudioContext for silence watchdog
-  const analyserRef = useRef(null);       // {src, analyser}
-  const silenceWatchdogRef = useRef(null);
-  const silenceStartRef = useRef(null);
+  // Mic device selection: the user-chosen deviceId is stored in a ref (never
+  // hardcoded). If that device disappears, getUserMedia falls back to the
+  // default microphone instead of failing the GD.
+  const selectedMicDeviceIdRef = useRef('');
+  const micAcquirePromiseRef = useRef(null); // in-flight acquisition promise (awaitable)
+
+  // Track turn metadata for speaker-aware flow: who spoke last, so agents can
+  // respond to another AGENT instead of always addressing the user.
+  const previousSpeakerRef = useRef(null);      // { id, name, type: 'user'|'agent' }
+  const [micDevices, setMicDevices] = useState([]);       // available inputs
+  const [selectedMicDeviceId, setSelectedMicDeviceId] = useState('');
   // Turn IDs whose user response was already added/submitted - prevents the
   // same transcript being stored twice (e.g. a late Whisper result re-entering
   // the submit flow for a turn that already completed).
@@ -105,6 +114,7 @@ const GDRound = ({ gdRound, studentId, onClose, onComplete }) => {
 
   useEffect(() => { userResponseRef.current = userResponse; }, [userResponse]);
   useEffect(() => { micEnabledRef.current = micEnabled; }, [micEnabled]);
+  useEffect(() => { selectedMicDeviceIdRef.current = selectedMicDeviceId; }, [selectedMicDeviceId]);
   useEffect(() => { volumeEnabledRef.current = volumeEnabled; }, [volumeEnabled]);
   useEffect(() => { recognitionActiveRef.current = recognitionActive; }, [recognitionActive]);
   useEffect(() => { sttStateRef.current = sttState; }, [sttState]);
@@ -116,6 +126,9 @@ const GDRound = ({ gdRound, studentId, onClose, onComplete }) => {
 
   // Completely release and stop all microphone, camera, and recognition resources
   const stopAllMediaTracks = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      try { mediaRecorderRef.current.stop(); } catch (e) {}
+    }
     if (mediaStreamRef.current) {
       mediaStreamRef.current.getTracks().forEach(track => {
         try { track.stop(); } catch (e) {}
@@ -128,15 +141,14 @@ const GDRound = ({ gdRound, studentId, onClose, onComplete }) => {
       });
       audioStreamRef.current = null;
     }
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      try { mediaRecorderRef.current.stop(); } catch (e) {}
-    }
+    mediaRecorderRef.current = null;
     if (recognitionRef.current) {
       try { recognitionRef.current.stop(); } catch (e) {}
     }
     setRecognitionActive(false);
     recognitionActiveRef.current = false;
     setIsRecording(false);
+    console.log('[Mic] Stream released');
   };
 
   // Initialize AI agents
@@ -193,7 +205,16 @@ const GDRound = ({ gdRound, studentId, onClose, onComplete }) => {
   useEffect(() => {
     if (phase === 'topic-selection' && topicSelectionTimer === 0) {
       if (!selectedTopic && gdRound?.available_topics?.length > 0) {
-        setSelectedTopic(gdRound.available_topics[0]);
+        const autoTopic = gdRound.available_topics[0];
+        setSelectedTopic(autoTopic);
+        // Persist the auto-selected topic to the backend (same as a manual
+        // selection). Without this the round is evaluated with topic: null,
+        // the LLM judges the speech against "None" and every criterion
+        // scores 0 with "evidence: none" - the static/zero-score bug.
+        if (gdRound?._id && !gdRound._id.startsWith('practice_')) {
+          gdAPI.selectTopic(gdRound._id, autoTopic).catch(err =>
+            console.error('Error persisting auto-selected topic:', err));
+        }
       }
       setPhase('preparation');
     }
@@ -221,11 +242,6 @@ const GDRound = ({ gdRound, studentId, onClose, onComplete }) => {
     const synth = synthRef.current;
     return () => {
       stopAllMediaTracks();
-      stopSilenceWatchdog();
-      micWatchersRef.current.forEach(({ ev, fn }) => {
-        try { ev.removeEventListener('mute', fn); ev.removeEventListener('ended', fn); } catch (e) {}
-      });
-      micWatchersRef.current = [];
       if (speakingTimeoutRef.current) clearTimeout(speakingTimeoutRef.current);
       if (aiSpeakingTimeoutRef.current) clearTimeout(aiSpeakingTimeoutRef.current);
       if (nextSpeakerTimerRef.current) clearTimeout(nextSpeakerTimerRef.current);
@@ -259,10 +275,13 @@ const GDRound = ({ gdRound, studentId, onClose, onComplete }) => {
         if (chunks.length > 0) {
           const mime = (recorder && recorder.mimeType) || mimeUsed || 'audio/webm';
           const audioBlob = new Blob(chunks, { type: mime });
+          console.log(`[Mic] Recording stopped`);
+          console.log(`[Mic] Audio blob created: ${audioBlob.size} bytes (${audioBlob.type})`);
           console.log(`[TURN ${activeTurnIdRef.current}] audio blob: ${audioBlob.size} bytes (${audioBlob.type})`);
           console.log(`[TURN ${activeTurnIdRef.current}] STT_STARTED -> POST /api/gd/transcribe`);
           await transcribeAudioBlob(audioBlob);
         } else {
+          console.warn('[GD-MIC] No audio chunks captured - empty recording');
           console.warn('[STT] No audio chunks available in MediaRecorder for transcription');
         }
       } else {
@@ -285,14 +304,15 @@ const GDRound = ({ gdRound, studentId, onClose, onComplete }) => {
     try {
       recorder = new MediaRecorder(audioStreamRef.current, recorderOptions);
     } catch (recErr) {
-      console.warn('MediaRecorder with custom mimeType failed, trying default:', recErr);
+      console.warn('[Mic] MediaRecorder with custom mimeType failed, trying default:', recErr);
       try {
         recorder = new MediaRecorder(audioStreamRef.current);
       } catch (recErr2) {
-        console.error('MediaRecorder initialization failed:', recErr2);
+        console.error('[Mic] MediaRecorder initialization failed:', recErr2);
         return null;
       }
     }
+    console.log('[Mic] MediaRecorder created', { state: recorder.state, mimeType: recorder.mimeType });
 
     recorder.ondataavailable = (e) => {
       if (e.data && e.data.size > 0) {
@@ -326,6 +346,7 @@ const GDRound = ({ gdRound, studentId, onClose, onComplete }) => {
       }
       mediaRecorderRef.current = recorder;
       recorder.start(250);
+      console.log('[Mic] Recording started, state:', recorder.state);
       console.log('[STT] MediaRecorder started, state:', recorder.state);
       return true;
     } catch (error) {
@@ -335,351 +356,248 @@ const GDRound = ({ gdRound, studentId, onClose, onComplete }) => {
     }
   };
 
-  // ---- Microphone health monitoring & auto-recovery ----
+  // ---- Microphone stream acquisition ----
 
-  // Acquire a fresh mic stream using the same escalating constraint strategy
-  // as initializeMedia (video+audio -> audio-only constrained -> audio-only).
+  // Acquire a fresh microphone stream. The REAL browser error is surfaced
+  // (never guessed): permission denied, no device, device busy, bad device
+  // selection etc. map 1:1 to their DOMException names.
   const acquireMicStream = async () => {
-    const speechAudioConstraints = {
-      echoCancellation: true,
-      noiseSuppression: true,
-      autoGainControl: true,
-      channelCount: 1,
-      sampleRate: 48000,
-    };
+    console.log('[Mic] Requesting getUserMedia');
     try {
-      return await navigator.mediaDevices.getUserMedia({ video: true, audio: speechAudioConstraints });
-    } catch (camErr) {
-      console.warn('[MIC_HEALTH] video+audio re-acquire failed:', camErr?.name);
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error('This browser does not expose navigator.mediaDevices.getUserMedia. Use HTTPS or localhost.');
+      }
+      if (selectedMicDeviceIdRef.current) {
+        console.log(`[Mic] Selected device: ${selectedMicDeviceIdRef.current}`);
+        try {
+          return await navigator.mediaDevices.getUserMedia({
+            audio: { deviceId: { ideal: selectedMicDeviceIdRef.current } },
+          });
+        } catch (deviceErr) {
+          // The specifically selected device failed (vanished / unsupported
+          // constraints): log the REAL error, then fall back to the default mic.
+          console.log('[Mic] getUserMedia failed');
+          console.log(`[Mic] Error name: ${deviceErr?.name}`);
+          console.log(`[Mic] Error message: ${deviceErr?.message || deviceErr}`);
+          if (deviceErr?.name === 'OverconstrainedError' || deviceErr?.name === 'NotFoundError') {
+            selectedMicDeviceIdRef.current = '';
+            setSelectedMicDeviceId('');
+          } else {
+            throw deviceErr;  // NotAllowedError etc. - report as-is
+          }
+        }
+      }
+      console.log('[Mic] getUserMedia({ audio: true }) (default microphone)');
+      return await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err) {
+      console.log('[Mic] getUserMedia failed');
+      console.log(`[Mic] Error name: ${err?.name}`);
+      console.log(`[Mic] Error message: ${err?.message || err}`);
+      throw err;
     }
-    try {
-      return await navigator.mediaDevices.getUserMedia({ audio: speechAudioConstraints });
-    } catch (audioErr) {
-      console.warn('[MIC_HEALTH] audio re-acquire failed:', audioErr?.name);
-    }
-    return navigator.mediaDevices.getUserMedia({ audio: true });
   };
 
   // Tear down old stream/watchers and swap in a fresh mic stream. Safe to
   // call mid-turn; if the recorder died with the old track, a new one is
   // started so the CURRENT turn keeps recording.
+  // Acquire a fresh mic stream and swap it in. The old AUDIO tracks are
+  // stopped ONLY after the new stream is in hand (never lose the mic); a
+  // live CAMERA track is preserved untouched. The active turn's recorder is
+  // re-created from the NEW active stream so the current turn keeps
+  // capturing; nothing else about the GD state is touched.
   const restoreMicrophone = async () => {
-    if (micRecoveringRef.current) return;
-    micRecoveringRef.current = true;
-    try {
-      console.log('[MIC_HEALTH] Restoring microphone - re-acquiring stream from OS');
-      const newStream = await acquireMicStream();
-
-      // Stop all old tracks AFTER a new stream is in hand (never lose the mic)
-      if (mediaStreamRef.current) {
-        mediaStreamRef.current.getTracks().forEach(t => { try { t.stop(); } catch (e) {} });
+    if (micRecoveringRef.current) {
+      console.log('[Mic] Acquisition already in progress - awaiting it');
+      if (micAcquirePromiseRef.current) {
+        try { await micAcquirePromiseRef.current; } catch (e) {}
       }
-      if (audioStreamRef.current) {
-        audioStreamRef.current.getTracks().forEach(t => { try { t.stop(); } catch (e) {} });
-      }
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-        try { mediaRecorderRef.current.stop(); } catch (e) {}
-      }
+      return;
+    }
+    const acquire = async () => {
+      try {
+        console.log('[Mic] Initializing microphone');
+        const newStream = await acquireMicStream();
+        console.log('[Mic] getUserMedia succeeded');
 
-      mediaStreamRef.current = newStream;
-      const audioTracks = newStream.getAudioTracks();
-      audioStreamRef.current = audioTracks.length > 0 ? new MediaStream(audioTracks) : null;
-
-      if (videoRef.current) videoRef.current.srcObject = newStream;
-      setCameraEnabled(newStream.getVideoTracks().length > 0);
-      setMicEnabled(audioTracks.length > 0);
-
-      watchMicTracks();
-      startSilenceWatchdog();
-
-      // Mid-turn recovery: restart the recorder on the fresh audio stream so
-      // the current turn keeps capturing into Whisper.
-      if (turnStateRef.current === 'RECORDING_USER' && currentSpeakerRef.current === 'user') {
-        const ok = ensureRecorderStarted();
-        console.log(`[MIC_HEALTH] Mid-turn recorder restart: ${ok ? 'OK' : 'FAILED'}`);
-        if (sttModeRef.current === 'browser' && recognitionRef.current && !browserSTTFailedRef.current) {
-          try { recognitionRef.current.start(); setRecognitionActive(true); recognitionActiveRef.current = true; } catch (e) {}
+        // Stop the recorder FIRST so it never records from a dying stream,
+        // then stop the old AUDIO tracks only AFTER the new stream is in hand.
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+          try { mediaRecorderRef.current.stop(); } catch (e) {}
+          mediaRecorderRef.current = null;
         }
-      }
+        audioStreamRef.current?.getTracks().forEach(t => { try { t.stop(); } catch (e) {} });
+        mediaStreamRef.current?.getAudioTracks().forEach(t => { try { t.stop(); } catch (e) {} });
 
-      micUnhealthyRef.current = false;
-      setMicIssue(null);
-      setSttError(null);
-      console.log('[MIC_HEALTH] Microphone restored successfully');
-    } catch (err) {
-      console.error('[MIC_HEALTH] Microphone restore failed:', err);
-      micUnhealthyRef.current = true;
-      setMicIssue(err?.name === 'NotReadableError'
-        ? 'Your microphone is being used by another app (Google Meet/Zoom/Teams). GD speech-to-text cannot run at the same time.'
-        : 'Could not re-access the microphone. Check Windows sound settings and browser permission, then press Restore Microphone.');
-      setSttState('ERROR');
+        // Preserve a live camera track from the previous combined stream.
+        const liveVideoTrack = mediaStreamRef.current?.getVideoTracks().find(t => t.readyState === 'live') || null;
+
+        mediaStreamRef.current = newStream;
+        console.log('[Mic] Stream obtained');
+        const audioTracks = newStream.getAudioTracks();
+        console.log(`[Mic] Audio tracks: ${audioTracks.length}`, audioTracks.map(t => `${t.label || 'mic'} (${t.readyState})`));
+        audioStreamRef.current = audioTracks.length > 0 ? new MediaStream(audioTracks) : null;
+
+        if (liveVideoTrack) {
+          mediaStreamRef.current.addTrack(liveVideoTrack);
+        }
+        if (videoRef.current && mediaStreamRef.current.getVideoTracks().length > 0) {
+          videoRef.current.srcObject = mediaStreamRef.current;
+        }
+
+        // Best-effort CAMERA (audio is the critical path): requested
+        // SEPARATELY so a busy camera can never block or break microphone
+        // capture. Camera failure is non-fatal and never surfaces as a mic error.
+        if (mediaStreamRef.current.getVideoTracks().length === 0) {
+          try {
+            const camStream = await navigator.mediaDevices.getUserMedia({ video: true });
+            camStream.getVideoTracks().forEach(t => { try { mediaStreamRef.current.addTrack(t); } catch (e) {} });
+            console.log('[Mic] Camera acquired (best-effort)');
+          } catch (camErr) {
+            console.log('[Mic] Camera unavailable (non-blocking):', camErr?.name);
+          }
+        }
+        setMicEnabled(audioTracks.length > 0);
+        setCameraEnabled(mediaStreamRef.current.getVideoTracks().length > 0);
+
+        // Mid-turn: build a FRESH MediaRecorder on the fresh active stream so
+        // the current turn keeps capturing. (A recorder is never reused after
+        // it has stopped, and never attached to a stream whose tracks died.)
+        if (turnStateRef.current === 'RECORDING_USER' && currentSpeakerRef.current === 'user') {
+          const ok = ensureRecorderStarted();
+          console.log(`[Mic] Mid-turn recorder restart: ${ok ? 'OK' : 'FAILED'}`);
+          if (sttModeRef.current === 'browser' && recognitionRef.current && !browserSTTFailedRef.current) {
+            try { recognitionRef.current.start(); setRecognitionActive(true); recognitionActiveRef.current = true; } catch (e) {}
+          }
+        }
+
+        setMicIssue(null);
+        setSttError(null);
+        console.log('[Mic] Microphone ready');
+      } catch (err) {
+        console.error('[Mic] getUserMedia failed:', err);
+        console.log(`[Mic] Error name: ${err?.name}`);
+        console.log(`[Mic] Error message: ${err?.message || err}`);
+        // Show the REAL error only - never a guessed "another app holds the mic".
+        setMicIssue(describeMicError(err));
+        setSttError(describeMicError(err));
+      }
+    };
+
+    micRecoveringRef.current = true;
+    const acquirePromise = acquire();
+    micAcquirePromiseRef.current = acquirePromise;
+    try {
+      await acquirePromise;
     } finally {
       micRecoveringRef.current = false;
+      micAcquirePromiseRef.current = null;
     }
   };
 
-  // listen for track-level mute/ended: the OS-level signals that another app
-  // took the mic or muted it system-wide.
-  const watchMicTracks = () => {
-    // Remove previous listeners first
-    micWatchersRef.current.forEach(({ ev, fn }) => {
-      try { ev.removeEventListener('mute', fn); ev.removeEventListener('ended', fn); } catch (e) {}
-    });
-    micWatchersRef.current = [];
-
-    const tracks = [
-      ...(mediaStreamRef.current?.getAudioTracks() || []),
-      ...(audioStreamRef.current?.getAudioTracks() || []),
-    ];
-    const seen = new Set();
-    tracks.forEach(track => {
-      if (seen.has(track)) return;
-      seen.add(track);
-      const onProblem = (what) => () => {
-        console.warn(`[MIC_HEALTH] Audio track ${what} - another app may have taken the mic`);
-        micUnhealthyRef.current = true;
-        setMicIssue(what === 'muted'
-          ? 'Your microphone was muted at the system level or taken over by another app (Google Meet/Zoom/Teams). Speaking is not being captured.'
-          : 'Your microphone track ended - another app (Google Meet/Zoom/Teams) may have taken exclusive control of it.');
-        if (turnStateRef.current === 'RECORDING_USER' && currentSpeakerRef.current === 'user') {
-          setSttError('Microphone interrupted by another app. Trying to restore it...');
-        }
-      };
-      const muteFn = onProblem('muted');
-      const endedFn = onProblem('ended');
-      track.addEventListener('mute', muteFn);
-      track.addEventListener('ended', endedFn);
-      micWatchersRef.current.push({ ev: track, fn: muteFn });
-      micWatchersRef.current.push({ ev: track, fn: endedFn });
-      if (track.muted) { micUnhealthyRef.current = true; setMicIssue('Your microphone is muted at the system level or held by another app.'); }
-    });
-  };
-
-  // Silence watchdog: measures real mic energy via WebAudio. A PERMANENTLY
-  // silent track (even while 'live') is the signature of another app holding
-  // the mic in exclusive mode or the OS routing audio elsewhere.
-  const startSilenceWatchdog = () => {
-    stopSilenceWatchdog();
-    if (!audioStreamRef.current || !window.AudioContext) return;
+  // ---- Microphone device selection ----
+  // Enumerate available audio input devices so the user's chosen mic (stored
+  // by deviceId in a ref - never hardcoded) is passed through getUserMedia.
+  // If the selected device later disappears, acquisition falls back to the
+  // default microphone instead of failing the GD session.
+  const refreshMicDevices = async () => {
     try {
-      const ctx = new AudioContext();
-      const src = ctx.createMediaStreamSource(audioStreamRef.current);
-      const analyser = ctx.createAnalyser();
-      analyser.fftSize = 512;
-      src.connect(analyser);
-      audioCtxRef.current = ctx;
-      analyserRef.current = { src, analyser };
-      const buf = new Uint8Array(analyser.frequencyBinCount);
-      silenceStartRef.current = null;
-      silenceWatchdogRef.current = setInterval(() => {
-        try {
-          // Layer 1: track liveness poll. NOTE: programmatic track.stop() and
-          // some OS device steals do NOT fire 'ended' on the track object, so
-          // a readyState check is required to catch every path.
-          const tracks = audioStreamRef.current?.getAudioTracks() || [];
-          const anyLive = tracks.some(t => t.readyState === 'live');
-          const anyMuted = tracks.some(t => t.muted);
-          if (tracks.length > 0 && !anyLive) {
-            // Re-assert on every tick so a stale-buffer "energy" reading can
-            // never clear this state while the track is dead.
-            if (!micUnhealthyRef.current) {
-              console.warn('[MIC_HEALTH] Audio track no longer live (readyState ended) - mic was taken/muted by another app or OS');
-            }
-            micUnhealthyRef.current = true;
-            setMicIssue('Your microphone was taken over or muted by another app (Google Meet/Zoom/Teams) or the system. Press Restore Microphone to re-acquire it.');
-            if (turnStateRef.current === 'RECORDING_USER' && currentSpeakerRef.current === 'user') {
-              setSttError('Microphone interrupted by another app. Press Restore Microphone.');
-            }
-            return; // no live track -> energy data is meaningless, stop here
-          }
-          if (anyMuted && !micUnhealthyRef.current) {
-            micUnhealthyRef.current = true;
-            console.warn('[MIC_HEALTH] Audio track reports muted');
-            setMicIssue('Your microphone is muted at the system level or held by another app (Google Meet/Zoom/Teams).');
-            return;
-          }
-
-          // Layer 2: energy silence check (exclusive capture can keep tracks
-          // 'live' but deliver permanent silence).
-          analyser.getByteFrequencyData(buf);
-          let sum = 0;
-          for (let i = 0; i < buf.length; i++) sum += buf[i];
-          const active = sum > 0;
-          if (active) {
-            silenceStartRef.current = null;
-            if (micUnhealthyRef.current && anyLive) {
-              // Real audio flowing on a live track - conflict resolved
-              micUnhealthyRef.current = false;
-              setMicIssue(null);
-              console.log('[MIC_HEALTH] Mic audio flowing again - conflict resolved');
-            }
-            return;
-          }
-          // Permanently silent (no OS audio at all)
-          if (!silenceStartRef.current) silenceStartRef.current = Date.now();
-          if (Date.now() - silenceStartRef.current > 20000 && !micUnhealthyRef.current) {
-            micUnhealthyRef.current = true;
-            console.warn('[MIC_HEALTH] Mic permanently silent for 20s - probable exclusive capture by another app');
-            setMicIssue('No audio is reaching the GD from your microphone for a while. Another app (Google Meet/Zoom/Teams) may be holding the mic exclusively, or it is muted in Windows sound settings.');
-            if (turnStateRef.current === 'RECORDING_USER' && currentSpeakerRef.current === 'user') {
-              setSttError('Microphone appears silent - another app may be using it. Trying to restore...');
-            }
-          }
-        } catch (e) { /* analyser closed */ }
-      }, 2000);
-      console.log('[MIC_HEALTH] Silence watchdog started');
-    } catch (e) {
-      console.warn('[MIC_HEALTH] Silence watchdog unavailable:', e);
-    }
-  };
-
-  const stopSilenceWatchdog = () => {
-    if (silenceWatchdogRef.current) {
-      clearInterval(silenceWatchdogRef.current);
-      silenceWatchdogRef.current = null;
-    }
-    if (analyserRef.current) {
-      try { analyserRef.current.src.disconnect(); } catch (e) {}
-      analyserRef.current = null;
-    }
-    if (audioCtxRef.current) {
-      try { audioCtxRef.current.close(); } catch (e) {}
-      audioCtxRef.current = null;
-    }
-    silenceStartRef.current = null;
-  };
-
-  // Auto-recover the mic when the user returns to this tab: browsers mute/
-  // suspend capture or hand the device back after conflicts; a fresh
-  // getUserMedia re-establishes a healthy stream. Only when unhealthy.
-  useEffect(() => {
-    const onVisible = () => {
-      if (document.visibilityState === 'visible' && micUnhealthyRef.current && !micRecoveringRef.current) {
-        console.log('[MIC_HEALTH] Tab visible again with unhealthy mic - auto-restoring');
-        restoreMicrophone();
+      if (!navigator.mediaDevices?.enumerateDevices) return;
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const mics = devices.filter(d => d.kind === 'audioinput');
+      setMicDevices(mics);
+      console.log(`[Mic] Available audio inputs: ${mics.length}`, mics.map(d => d.label || (d.deviceId || '').slice(0, 8) || 'default'));
+      // If the previously selected device no longer exists, drop it so the
+      // next getUserMedia gracefully falls back to the default microphone.
+      const sel = selectedMicDeviceIdRef.current;
+      if (sel && !mics.some(d => d.deviceId === sel)) {
+        console.warn(`[GD-MIC] Selected device ${sel.slice(0, 8)}... no longer available - falling back to default mic`);
+        selectedMicDeviceIdRef.current = '';
+        setSelectedMicDeviceId('');
       }
-    };
-    document.addEventListener('visibilitychange', onVisible);
-    return () => document.removeEventListener('visibilitychange', onVisible);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    } catch (e) {
+      console.warn('[GD-MIC] Device enumeration failed:', e);
+    }
+  };
 
-  // React to live device changes (user picks another mic / OS re-enumerates
-  // after another app releases it).
+  // Re-enumerate when the OS swaps devices (headset plugged/unplugged etc.)
   useEffect(() => {
     if (!navigator.mediaDevices || !navigator.mediaDevices.addEventListener) return undefined;
-    const onDeviceChange = () => {
-      console.log('[MIC_HEALTH] Device change detected');
-      if (micUnhealthyRef.current && !micRecoveringRef.current) {
-        setTimeout(() => {
-          if (micUnhealthyRef.current && !micRecoveringRef.current) restoreMicrophone();
-        }, 500);
-      }
-    };
-    navigator.mediaDevices.addEventListener('devicechange', onDeviceChange);
-    return () => navigator.mediaDevices.removeEventListener('devicechange', onDeviceChange);
+    const onChange = () => { console.log('[GD-MIC] devicechange - refreshing mic list'); refreshMicDevices(); };
+    navigator.mediaDevices.addEventListener('devicechange', onChange);
+    return () => navigator.mediaDevices.removeEventListener('devicechange', onChange);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Initialize camera and microphone
-  const initializeMedia = async () => {
-    // Speech-optimized audio constraints. All keys are IDEAL (not exact), so
-    // browsers that don't support a constraint (Firefox/Safari) simply ignore
-    // it instead of failing getUserMedia with OverconstrainedError.
-    const speechAudioConstraints = {
-      echoCancellation: true,   // prevents AI-agent TTS from being re-recorded
-      noiseSuppression: true,   // removes steady background noise (fans, AC)
-      autoGainControl: true,    // keeps quiet/loud speakers in a consistent range
-      channelCount: 1,          // mono - halves upload size, all Whisper needs
-      sampleRate: 48000,
-    };
-    try {
-      let stream;
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: true,
-          audio: speechAudioConstraints,
-        });
-      } catch (camErr) {
-        console.warn('Camera + mic request failed, falling back to audio-only stream:', camErr);
-        if (camErr && camErr.name === 'NotReadableError') {
-          // Typically means another app is holding the camera/microphone
-          micUnhealthyRef.current = true;
-          setMicIssue('Your microphone is being used by another app (Google Meet/Zoom/Teams). GD speech-to-text cannot run at the same time - close the other call or press Restore Microphone once it is free.');
-          setSttError('Your mic/camera appears to be in use by another app (Zoom/Meet/Teams). Close it or pick another mic, then reload this page.');
-        }
-        try {
-          stream = await navigator.mediaDevices.getUserMedia({ audio: speechAudioConstraints });
-        } catch (audioErr) {
-          console.warn('Audio-only stream with constraints failed, retrying without constraints:', audioErr);
-          stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        }
-      }
-
-      mediaStreamRef.current = stream;
-      if (videoRef.current) videoRef.current.srcObject = stream;
-      setCameraEnabled(stream.getVideoTracks().length > 0);
-      setMicEnabled(true);
-      // A usable stream was obtained - clear any conflict flag raised by an
-      // earlier failed attempt (e.g. camera busy but mic fine).
-      if (stream.getAudioTracks().some(t => t.readyState === 'live')) {
-        micUnhealthyRef.current = false;
-        setMicIssue(null);
-      }
-
-      // Dedicated audio-only stream for MediaRecorder to avoid container issues
-      const audioTracks = stream.getAudioTracks();
-      if (audioTracks.length > 0) {
-        audioStreamRef.current = new MediaStream(audioTracks);
-      }
-
-      const mimeTypes = [
-        'audio/webm;codecs=opus',
-        'audio/webm',
-        'audio/ogg;codecs=opus',
-        'audio/ogg',
-        'audio/mp4',
-        'audio/wav'
-      ];
-      let selectedMimeType = '';
-      if (window.MediaRecorder && MediaRecorder.isTypeSupported) {
-        for (const mime of mimeTypes) {
-          if (MediaRecorder.isTypeSupported(mime)) {
-            selectedMimeType = mime;
-            break;
-          }
-        }
-      }
-      selectedMimeTypeRef.current = selectedMimeType;
-
-      if (!window.MediaRecorder || !audioStreamRef.current) {
-        console.warn('MediaRecorder not supported on this browser');
-        setSttError('Audio recording is not supported in this browser.');
-      }
-
-      // Mic health monitoring: track-level mute/ended events + silence
-      // watchdog so conflicts with Meet/Zoom/Teams are detected & recovered.
-      watchMicTracks();
-      startSilenceWatchdog();
-      // NOTE: a fresh MediaRecorder is created for every speaking turn via
-      // ensureRecorderStarted() (see above). Do NOT construct one here.
-    } catch (error) {
-      console.error('Error accessing media devices:', error);
-      setSttState('ERROR');
-      if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
-        setSttError('Microphone permission denied. Please allow microphone access or type manually.');
-      } else if (error.name === 'NotReadableError') {
-        // Another app (Meet/Zoom/Teams) is holding the mic RIGHT NOW - show
-        // the actionable banner with the Restore Microphone button so the
-        // user can recover the moment the other app releases it.
-        micUnhealthyRef.current = true;
-        setMicIssue('Your microphone is being used by another app (Google Meet/Zoom/Teams). Close that call, then press Restore Microphone.');
-        setSttError('Your microphone is being used by another app (Zoom/Meet/Teams/Discord). Close it or pick another mic, then reload.');
-      } else {
-        setSttError('Could not access microphone. Please check your audio settings.');
-      }
-      alert('Please allow microphone access to participate in the GD round.');
+  // Map the REAL getUserMedia failure (DOMException) to a human-readable
+  // message. Every message is derived from an actual browser error name -
+  // the cause is never guessed or invented.
+  const describeMicError = (error) => {
+    switch (error?.name) {
+      case 'NotAllowedError':
+      case 'PermissionDeniedError':
+        return 'Microphone permission denied by the browser. Allow microphone access for this site in your browser settings, then try again.';
+      case 'NotFoundError':
+      case 'DevicesNotFoundError':
+        return 'No microphone was found. Connect a microphone and try again.';
+      case 'NotReadableError':
+      case 'TrackStartError':
+        return 'The browser could not read from your microphone (NotReadableError). The device may be in use by another application or disabled in system audio settings.';
+      case 'OverconstrainedError':
+        return 'The selected microphone does not support the requested settings (OverconstrainedError). Choose "Default microphone" or pick another device.';
+      case 'SecurityError':
+        return 'Microphone access is blocked because the page is not in a secure context. Use HTTPS or localhost.';
+      case 'AbortError':
+        return 'The microphone request was aborted. Please try again.';
+      default:
+        return error?.message || 'Could not access the microphone. Check your audio settings.';
     }
+  };
+
+  // Initialize camera and microphone.
+  // NOTE: mic acquisition follows the browser contract directly:
+  //   getUserMedia() -> live stream -> fresh MediaRecorder per turn -> Blob
+  //   -> existing /api/gd/transcribe STT pipeline.
+  // No "health" heuristics: if the mic fails, the REAL browser error is
+  // shown (NotAllowedError / NotFoundError / NotReadableError /
+  // OverconstrainedError / AbortError) - the cause is never guessed.
+  const initializeMedia = async () => {
+    console.log('[Mic] Initializing microphone');
+    // Single acquisition path (shared with mid-turn restores / device swaps).
+    await restoreMicrophone();
+
+    if (!audioStreamRef.current) {
+      setSttError('Microphone unavailable. Check the microphone error shown above.');
+      return;
+    }
+
+    const mimeTypes = [
+      'audio/webm;codecs=opus',
+      'audio/webm',
+      'audio/ogg;codecs=opus',
+      'audio/ogg',
+      'audio/mp4',
+      'audio/wav'
+    ];
+    let selectedMimeType = '';
+    if (window.MediaRecorder && MediaRecorder.isTypeSupported) {
+      for (const mime of mimeTypes) {
+        if (MediaRecorder.isTypeSupported(mime)) {
+          selectedMimeType = mime;
+          break;
+        }
+      }
+    }
+    selectedMimeTypeRef.current = selectedMimeType;
+
+    if (!window.MediaRecorder) {
+      console.warn('MediaRecorder not supported on this browser');
+      setSttError('Audio recording is not supported in this browser.');
+    }
+
+    // Enumerate available mics (after permission, labels are populated)
+    refreshMicDevices();
+    // NOTE: a fresh MediaRecorder is created for every speaking turn via
+    // ensureRecorderStarted() (see below). Do NOT construct one here.
   };
 
   // Attach the media stream to the <video> element once it is rendered in the
@@ -848,6 +766,7 @@ const GDRound = ({ gdRound, studentId, onClose, onComplete }) => {
             timestamp: new Date().toISOString()
           };
           setAllResponses(prev => [...prev, lateResponse]);
+          previousSpeakerRef.current = { id: 'user', name: 'You', type: 'user' };
           if (gdRound?._id && !gdRound._id.startsWith('practice_') && gdRound._id.length > 10) {
             gdAPI.submitResponse(gdRound._id, lateText).catch(err =>
               console.error('Error submitting late response to backend:', err)
@@ -947,7 +866,7 @@ const GDRound = ({ gdRound, studentId, onClose, onComplete }) => {
     }
   };
 
-  const startUserSpeaking = (source = 'unknown') => {
+  const startUserSpeaking = async (source = 'unknown') => {
     // Cancel any ongoing TTS immediately
     if (synthRef.current) synthRef.current.cancel();
     if (speakingTimeoutRef.current) {
@@ -968,7 +887,10 @@ const GDRound = ({ gdRound, studentId, onClose, onComplete }) => {
     turnStateRef.current = 'RECORDING_USER';
     turnEpochRef.current += 1;
     console.log(`[TURN ${tid}] USER_START (source: ${source})`);
+    console.log(`[GD-TURN] Current speaker: user`);
+    console.log(`[GD-TURN] Previous speaker: ${previousSpeakerRef.current ? `${previousSpeakerRef.current.id} (${previousSpeakerRef.current.type})` : 'none'}`);
     browserNetworkRetryRef.current = 0; // fresh retry budget per speaking turn
+
     setCurrentSpeaker('user');
     setIsRecording(true);
     setSttError(null);
@@ -979,6 +901,23 @@ const GDRound = ({ gdRound, studentId, onClose, onComplete }) => {
     // NOTE: userResponse is deliberately NOT cleared here - if the previous
     // turn ended with "no speech detected", anything the user typed as a
     // fallback must survive into the retry turn.
+
+    // ---- BASIC MIC GUARANTEE (runs EVERY turn) ----
+    // The MediaRecorder must ALWAYS be created from a LIVE stream. If the
+    // previous turn released the stream, the stream died, or the mic was
+    // never acquired, acquire a fresh one NOW and AWAIT it, so recording
+    // starts from real audio. Per turn: getUserMedia -> stream -> fresh
+    // MediaRecorder -> chunks -> Blob -> existing STT pipeline.
+    const liveAudioTracks = (audioStreamRef.current?.getAudioTracks() || [])
+      .filter(t => t.readyState === 'live');
+    if (liveAudioTracks.length === 0) {
+      console.log(`[TURN ${tid}] No live mic stream at turn start - acquiring a fresh microphone stream`);
+      await restoreMicrophone();
+    }
+    // Refresh the mic mirror immediately: state setters above resolve on the
+    // NEXT render, but the browser-STT decision below runs NOW.
+    micEnabledRef.current = (audioStreamRef.current?.getAudioTracks() || [])
+      .some(t => t.readyState === 'live' && t.enabled);
 
     const useBrowserSTT =
       sttModeRef.current === 'browser' &&
@@ -1008,7 +947,8 @@ const GDRound = ({ gdRound, studentId, onClose, onComplete }) => {
     }
 
     // Always run a fresh MediaRecorder as safety net/fallback (ONE per turn:
-    // create once, start once, stop once, transcribe once)
+    // create once, start once, stop once, transcribe once). Created from the
+    // ACTIVE audio stream only.
     ensureRecorderStarted();
     console.log(`[TURN ${tid}] RECORDING_STARTED (recorder: ${mediaRecorderRef.current?.state || 'unavailable'})`);
 
@@ -1064,8 +1004,9 @@ const GDRound = ({ gdRound, studentId, onClose, onComplete }) => {
         // stop() flushes all pending chunks to ondataavailable before onstop fires
         mediaRecorderRef.current.stop();
         console.log(`[TURN ${tid}] RECORDING_STOPPED`);
+        console.log('[Mic] Recording stopped');
       } catch (error) {
-        console.warn('MediaRecorder stop failed:', error);
+        console.warn('[Mic] MediaRecorder stop failed:', error);
         transcriptionWait = null;
         transcribeDoneRef.current = null;
       }
@@ -1151,6 +1092,9 @@ const GDRound = ({ gdRound, studentId, onClose, onComplete }) => {
         timestamp: new Date().toISOString()
       };
       setAllResponses(prev => [...prev, response]);
+      // Speaker tracking: the user is now the previous speaker, so the next
+      // agent knows whom it is responding to.
+      previousSpeakerRef.current = { id: 'user', name: 'You', type: 'user' };
       setUserResponse('');
       userResponseRef.current = '';
       finalTranscriptRef.current = '';
@@ -1196,6 +1140,7 @@ const GDRound = ({ gdRound, studentId, onClose, onComplete }) => {
     const tid = activeTurnIdRef.current;
     console.log(`[TURN ${tid}] TYPED_SUBMIT (manual response while waiting)`);
     setAllResponses(prev => [...prev, { participant: 'user', name: 'You', text, timestamp: new Date().toISOString() }]);
+    previousSpeakerRef.current = { id: 'user', name: 'You', type: 'user' };
     setUserResponse('');
     userResponseRef.current = '';
     finalTranscriptRef.current = '';
@@ -1296,24 +1241,43 @@ const GDRound = ({ gdRound, studentId, onClose, onComplete }) => {
     setIsGeneratingAIResponse(true);
     setAiUnavailable(false);
 
-    // The agent must react to what the user JUST said - pass the exact latest
-    // user transcript alongside the recent discussion context.
+    console.log(`[GD-TURN] Current speaker: ${agent.id}`);
+    console.log(`[GD-TURN] Previous speaker: ${previousSpeakerRef.current ? `${previousSpeakerRef.current.id} (${previousSpeakerRef.current.type})` : 'none'}`);
+
+    // ---- Speaker-aware response target ----
+    // The agent responds to the PREVIOUS speaker, whoever that was: another
+    // agent (agent->agent discussion) or the user. The user is targeted when
+    // they spoke last OR when no one has spoken yet. Otherwise the discussion
+    // continues between agents instead of every agent addressing the user.
+    const prev = previousSpeakerRef.current;
+    const respondToType = (!prev || prev.type === 'user' || prev.id === agent.id) ? 'user' : 'agent';
+    const respondToName = prev ? prev.name : 'You';
+    const respondToText = prev ? prev.text : '';
+    console.log(`[GD-TURN] Next speaker: ${agent.id}`);
+    console.log(`[GD-TURN] Response target: ${respondToType === 'agent' ? respondToName : 'user'}`);
+
+    // The agent must react to what was JUST said by the previous speaker -
+    // pass the exact latest statements alongside the recent discussion context.
     const recentContext = allResponsesRef.current.slice(-5).map(r => `${r.name}: ${r.text}`).join('\n');
     let aiResponse;
     let isOffTopicReply = false;
     try {
-      // The agent must react to what the user JUST said: latest_user_text is
-      // the exact latest user transcript from the CURRENT turn - never stale
-      // state, never a previous AI response.
-      const currentUserTranscript = lastUserResponse ? lastUserResponse.text : '';
-      console.log(`[TURN ${tid}] [AI_DEBUG] TRANSCRIPT_SENT_TO_AI: ${JSON.stringify(currentUserTranscript)}`);
+      // For user-directed turns the agent reacts to the exact latest user
+      // transcript (never stale state). For agent-directed turns it reacts to
+      // the previous agent's actual last statement.
+      const currentUserTranscript = respondToType === 'user' && lastUserResponse ? lastUserResponse.text : '';
+      console.log(`[TURN ${tid}] [AI_DEBUG] TRANSCRIPT_SENT_TO_AI: ${JSON.stringify(respondToType === 'agent' ? respondToText : currentUserTranscript)}`);
       const response = await gdAPI.getAgentResponse({
         round_id: gdRound?._id,
         topic: selectedTopic,
         context: recentContext,
         agent_personality: agent.personality,
         agent_gender: agent.gender,
-        latest_user_text: currentUserTranscript
+        latest_user_text: currentUserTranscript,
+        respond_to_type: respondToType,
+        respond_to_name: respondToType === 'agent' ? respondToName : undefined,
+        respond_to_text: respondToType === 'agent' ? respondToText : undefined,
+        agent_name: agent.name,
       });
       if (response.data && response.data.agent_response_available === false) {
         // Backend explicitly reports no AI provider available - show a clear
@@ -1368,6 +1332,9 @@ const GDRound = ({ gdRound, studentId, onClose, onComplete }) => {
       text: aiResponse,
       timestamp: new Date().toISOString()
     }]);
+    // Speaker tracking: this agent is now the previous speaker, so the NEXT
+    // agent can respond to it (agent->agent flow) instead of the user.
+    previousSpeakerRef.current = { id: agent.id, name: agent.name, type: 'agent', text: aiResponse };
 
     const finishAgentTurn = () => {
       if (aiSpeakingTimeoutRef.current) {
@@ -2049,6 +2016,45 @@ const GDRound = ({ gdRound, studentId, onClose, onComplete }) => {
                     </div>
                   ))}
                 </div>
+                {/* Microphone selection - the chosen deviceId is passed through
+                    getUserMedia with graceful fallback to the default mic. */}
+                {micDevices.length > 1 && (
+                  <div className="mt-4 bg-white rounded-lg border p-3">
+                    <label className="block text-xs font-semibold text-gray-600 mb-1">Microphone</label>
+                    <select
+                      value={selectedMicDeviceId}
+                      onChange={(e) => {
+                        const deviceId = e.target.value;
+                        setSelectedMicDeviceId(deviceId);
+                        selectedMicDeviceIdRef.current = deviceId;
+                        console.log(`[Mic] Selected device: ${deviceId || 'default microphone'}`);
+                        // Store the new deviceId; the NEXT recording uses the
+                        // newly selected device. Stop the old stream now so no
+                        // stale capture keeps running, but do NOT touch the
+                        // current turn state: if a turn is active, the turn-start
+                        // mic guarantee re-acquires a live stream from the new
+                        // device before recording continues.
+                        if (mediaStreamRef.current || audioStreamRef.current) {
+                          mediaStreamRef.current?.getTracks().forEach(t => { try { t.stop(); } catch (err) {} });
+                          audioStreamRef.current?.getTracks().forEach(t => { try { t.stop(); } catch (err) {} });
+                          mediaStreamRef.current = null;
+                          audioStreamRef.current = null;
+                        }
+                        if (!(turnStateRef.current === 'RECORDING_USER' && currentSpeakerRef.current === 'user')) {
+                          restoreMicrophone();
+                        }
+                      }}
+                      className="w-full text-xs border rounded-lg px-2 py-1.5 bg-gray-50 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                    >
+                      <option value="">Default microphone</option>
+                      {micDevices.map((d) => (
+                        <option key={d.deviceId} value={d.deviceId}>
+                          {d.label || `Microphone ${d.deviceId.slice(0, 6)}`}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
                 <button
                   onClick={handleForceSubmit}
                   className="w-full mt-4 bg-orange-600 hover:bg-orange-700 text-white px-4 py-2 rounded-lg transition"
@@ -2194,7 +2200,13 @@ const GDRound = ({ gdRound, studentId, onClose, onComplete }) => {
                   ))}
                   {(() => {
                     const me = results.all_participants.find(p => p.type === 'student');
-                    const weighted = Object.values(me?.scores || {}).reduce((acc, d) => acc + (d.score * d.weight) / 100, 0);
+                    // Backend-authoritative total: the weighted total is
+                    // calculated ONCE in the backend (and validated there).
+                    // Recomputing it here could drift from the backend value
+                    // and from the rank that was derived from it.
+                    const weighted = typeof me?.total_score === 'number'
+                      ? me.total_score
+                      : Object.values(me?.scores || {}).reduce((acc, d) => acc + (d.score * d.weight) / 100, 0);
                     return (
                       <div className="mt-4 pt-4 border-t border-gray-200 flex justify-between items-center">
                         <span className="font-bold text-gray-800">Exact Total (weighted)</span>

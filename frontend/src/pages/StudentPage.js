@@ -6,7 +6,7 @@ import CodingInterface from '../components/CodingInterface';
 import AptitudeTraining from '../components/AptitudeTraining';
 import GDRound from '../components/GDRound';
 import { useData } from '../context/DataContext';
-import { studentAPI, interviewAPI, chatbotAPI, API_URL } from '../services/api';
+import { studentAPI, interviewAPI, chatbotAPI, gdAPI, assessmentAPI, API_URL } from '../services/api';
 import { FileText, Briefcase, Upload, MessageSquare, Trophy, User, Code, Database, Globe, BarChart3, Network, Cloud, MessageCircle, Users, Users2, Brain, Clock, Target, CheckCircle, Award, ArrowLeft, ClipboardList, Mic, Check, X, Menu, Settings, Lock, AlertCircle, UserCircle, Bell, Info, Save, Edit2 } from 'lucide-react';
 
 const StudentPage = () => {
@@ -34,6 +34,20 @@ const StudentPage = () => {
   
   // Interview
   const [interviewModalOpen, setInterviewModalOpen] = useState(false);
+  // RESUME GATEKEEPER: AI Interview cannot start until a resume is on file.
+  // The backend uses resume text to generate targeted questions, so this is
+  // enforced before startInterview() is ever called.
+  // interviewResumeReady is a REAL 3-state flag: null = still checking the
+  // database, true = resume uploaded, false = no resume. The UI must never
+  // render a "Resume on file" banner while the state is unknown.
+  const [interviewResumeGate, setInterviewResumeGate] = useState(false);
+  const [interviewResumeUploading, setInterviewResumeUploading] = useState(false);
+  const [interviewResumeReady, setInterviewResumeReady] = useState(null); // null=unknown, true/false
+  const [interviewCheckingResume, setInterviewCheckingResume] = useState(true);
+  // Interview type the student clicked (text/voice) while being held at the
+  // mandatory upload step - used to auto-start right after a successful upload.
+  const [pendingInterviewMode, setPendingInterviewMode] = useState(null);
+  const interviewResumeInputRef = useRef(null);
   const [interviewMode, setInterviewMode] = useState(null);
   const [interviewStarting, setInterviewStarting] = useState(false);
   const [interviewEvaluating, setInterviewEvaluating] = useState(false);
@@ -46,13 +60,36 @@ const StudentPage = () => {
   const [timeRemaining, setTimeRemaining] = useState(0);
   const [timerActive, setTimerActive] = useState(false);
   const [interviewResults, setInterviewResults] = useState(null);
+  const [interviewSessionId, setInterviewSessionId] = useState(null);
+  const [interviewResuming, setInterviewResuming] = useState(false);
+  const interviewFinalizedRef = useRef(false);
   
-  // Quiz
+  // Quiz (server-controlled MCQ assessment)
   const [quizModalOpen, setQuizModalOpen] = useState(false);
   const [currentQuiz, setCurrentQuiz] = useState(null);
+  // Per-attempt question paper: the backend serves each attempt (and every
+  // retake) its own randomized snapshot (dynamic question pooling), so the
+  // modal renders THIS list, not the assignment's static stored bank.
+  const [quizQuestions, setQuizQuestions] = useState([]);
   const [quizAnswers, setQuizAnswers] = useState({});
   const [quizSubmitting, setQuizSubmitting] = useState(false);
   const [quizResults, setQuizResults] = useState(null);
+  const [quizAttempt, setQuizAttempt] = useState(null); // server-side attempt (expiry authority)
+  const [quizTimeRemaining, setQuizTimeRemaining] = useState(0); // display only
+  const [quizLockMessage, setQuizLockMessage] = useState(null);
+  // Retake flow: true while a retake start request is in flight.
+  const [quizRetaking, setQuizRetaking] = useState(false);
+  const quizTimerRef = useRef(null);
+  const quizFinalizedRef = useRef(false); // guards duplicate fail/submit calls
+  // Refs mirror the latest state so event listeners (visibilitychange) and
+  // interval ticks never read a stale closure (BUG 3: the old listener
+  // captured outdated currentQuiz/quizAttempt and could no-op or double-fire).
+  const quizAttemptRef = useRef(null);
+  const quizLockMessageRef = useRef(null);
+  // currentQuizRef mirrors currentQuiz so finalizeQuizFailure (called from
+  // event listeners registered once) always reads the latest assignment
+  // instead of a stale React state value captured at registration time.
+  const currentQuizRef = useRef(null);
   
   // Placement Training
   const [trainingType, setTrainingType] = useState(null); // 'technical' or 'non-technical'
@@ -114,9 +151,54 @@ const StudentPage = () => {
   const timerIntervalRef = useRef(null);
   const synthRef = useRef(window.speechSynthesis);
 
+  // Voice-mode interview capture: MediaRecorder -> shared /gd/transcribe
+  // endpoint (faster-whisper singleton in stt_service.py). No second Whisper
+  // implementation is created - the GD endpoint and its model are REUSED.
+  const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
+  const interviewStreamRef = useRef(null);
+  const voiceTranscriptRef = useRef(null);        // Whisper transcript for the current turn
+  const voiceTranscribePromiseRef = useRef(null); // in-flight transcription request
+  // STT quality of the current turn's transcript (VALID / LOW_CONFIDENCE /
+  // NO_SPEECH / INVALID) captured from /gd/transcribe. Empty/low-confidence
+  // turns must never be saved or evaluated as meaningful answers.
+  const voiceTranscriptStatusRef = useRef(null);
+  // Sync mirror of the recording state: browser SpeechRecognition errors and
+  // React's async setState can desync `isRecording`, and a stale value here
+  // previously let a second MediaRecorder be created on the same stream (an
+  // orphaned recorder -> corrupt/undecodable audio -> backend 422
+  // "Audio could not be decoded"). The ref is the authoritative guard.
+  const isRecordingRef = useRef(false);
+
   useEffect(() => {
     fetchAllData();
     loadStudentData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // AI Interview resume-status check (runs ONCE on mount, independent of the
+  // dashboard data load): reads the REAL database state (resumeUploaded from
+  // the progress endpoint) before the Interview tab is allowed to claim
+  // anything. Until this resolves the tab shows a neutral "checking" card -
+  // never a fabricated "Resume on file" banner.
+  useEffect(() => {
+    let cancelled = false;
+    const checkResumeStatus = async () => {
+      try {
+        const res = await studentAPI.getProgress(currentStudent.id);
+        if (!cancelled) {
+          setInterviewResumeReady(res.data?.resumeUploaded === true);
+        }
+      } catch (error) {
+        console.error('Error checking resume status:', error);
+        // Unknown state: stay null so the UI keeps showing "checking";
+        // starting an interview will hit the backend RESUME_REQUIRED gate.
+      } finally {
+        if (!cancelled) setInterviewCheckingResume(false);
+      }
+    };
+    checkResumeStatus();
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -151,6 +233,16 @@ const StudentPage = () => {
       ]);
       setStudentAssignments(assignmentsRes.data);
       setProgress(progressRes.data);
+      // Resume gatekeeper state: reflect whether a resume is already on file
+      // (backend stores resume_text/resume_filename on upload).
+      setInterviewResumeReady(progressRes.data?.resumeUploaded === true);
+      // The dashboard always renders what the backend just returned: the
+      // progress endpoint reads the user document fresh from Mongo, so a
+      // refresh / re-login shows the latest persisted interview result.
+      console.log('[DASHBOARD] Interview result fetched:',
+        progressRes.data?.interviewScore != null
+          ? `score=${progressRes.data.interviewScore} status=${progressRes.data.interviewStatus}`
+          : 'no result yet');
     } catch (error) {
       console.error('Error loading student data:', error);
     }
@@ -262,12 +354,223 @@ const StudentPage = () => {
     }
   };
 
-  const handleStartQuiz = (assignment) => {
+  const handleStartQuiz = async (assignment, retake = false) => {
     setCurrentQuiz(assignment);
+    // Ref keeps pace with state so closures registered once (visibilitychange,
+    // timer ticks) always read the live assignment without re-registering.
+    currentQuizRef.current = assignment;
     setQuizAnswers({});
     setQuizResults(null);
+    setQuizLockMessage(null);
+    quizLockMessageRef.current = null;
+    setQuizModalOpen(true);
+    setQuizAttempt(null);
+    quizAttemptRef.current = null;
+    setQuizTimeRemaining(0);
+    quizFinalizedRef.current = false;
+    // DYNAMIC POOLING: reset to the assignment bank as the initial fallback;
+    // the authoritative per-attempt paper replaces it once start returns.
+    setQuizQuestions(assignment.quiz_questions || []);
+    // Retake flow: archive the finished attempt server-side and start fresh.
+    setQuizRetaking(retake);
+
+    // Ask the backend to start (or resume) the attempt. The expiry time is
+    // generated server-side, so refreshing can never reset the timer.
+    try {
+      let response;
+      try {
+        if (retake) {
+          // Explicit retake: archive finished attempt + create a new one.
+          response = await assessmentAPI.startTeacherQuiz(assignment.id, currentStudent.id, true);
+        } else {
+          // Resume-safe: reuse an existing attempt when there is one.
+          response = await assessmentAPI.teacherQuizStatus(assignment.id, currentStudent.id);
+          if (!response.data?.attempt) {
+            // Never started: create the attempt (server timestamps).
+            response = await assessmentAPI.startTeacherQuiz(assignment.id, currentStudent.id);
+          }
+        }
+      } catch (statusErr) {
+        // Status lookup failed (network blip etc.) - fall back to start/resume.
+        response = await assessmentAPI.startTeacherQuiz(assignment.id, currentStudent.id, retake);
+      }
+      const data = response.data || {};
+      const attempt = data.attempt;
+      setQuizAttempt(attempt);
+      quizAttemptRef.current = attempt;
+
+      // The backend serves this attempt's own randomized paper - always the
+      // authority for what is rendered (a retake gets a fresh selection).
+      if (Array.isArray(data.questions) && data.questions.length > 0) {
+        setQuizQuestions(data.questions);
+      } else if (attempt && attempt.status !== 'IN_PROGRESS') {
+        // No active paper (attempt finished): the lock screen shows instead.
+        setQuizQuestions([]);
+      }
+
+      if (attempt && attempt.status !== 'IN_PROGRESS') {
+        // Finished attempt WITHOUT an explicit retake: no longer a dead end -
+        // surface the last result AND a Retake Assessment button.
+        const msg = buildQuizLockMessage(attempt);
+        setQuizLockMessage(msg);
+        quizLockMessageRef.current = msg;
+        return;
+      }
+      setQuizRetaking(false);
+      setQuizTimeRemaining(attempt?.remainingSeconds || 0);
+    } catch (error) {
+      console.error('Error starting quiz assessment:', error);
+      alert('Failed to start the quiz assessment.');
+      setQuizModalOpen(false);
+    }
+  };
+
+  // Retake from the lock/result state: archive the old attempt and start a
+  // clean one (server re-validates; finished attempts are archived, history
+  // and scores are preserved).
+  const handleRetakeQuiz = () => {
+    if (!currentQuiz) return;
+    setQuizLockMessage(null);
+    quizLockMessageRef.current = null;
+    setQuizResults(null);
+    setQuizAnswers({});
+    quizFinalizedRef.current = false;
+    setQuizQuestions([]); // fresh randomized paper arrives from the backend
+    handleStartQuiz(currentQuiz, true);
+  };
+
+  // Detailed answer review for an already-submitted quiz (from the stored
+  // evaluation returned by the assignments endpoint).
+  const handleViewQuizResult = (assignment) => {
+    const evaluation = assignment.quiz_evaluation || {};
+    setCurrentQuiz(assignment);
+    currentQuizRef.current = assignment;
+    setQuizAnswers({});
+    setQuizLockMessage(null);
+    quizLockMessageRef.current = null;
+    setQuizAttempt(null);
+    quizAttemptRef.current = null;
+    setQuizTimeRemaining(0);
+    quizFinalizedRef.current = false;      setQuizResults({
+        score: Math.round(evaluation.score ?? assignment.quiz_score ?? 0),
+        passed: evaluation.passed ?? assignment.quiz_passed,
+        questionFeedback: (evaluation.results || []).map(r => ({
+          question: r.question,
+          answer: r.user_answer || 'No answer provided',
+          correctAnswer: r.correct_answer,
+          category: r.category,
+          isCorrect: r.status === 'correct',
+          status: r.status,
+        })),
+        overallFeedback: evaluation.performance?.message ||
+          `You scored ${Math.round(evaluation.score ?? assignment.quiz_score ?? 0)}%.`,
+      });
     setQuizModalOpen(true);
   };
+
+  const buildQuizLockMessage = (attempt) => {
+    if (!attempt) return 'This assessment is no longer available.';
+    if (attempt.failureReason === 'TAB_SWITCH') {
+      return 'Assessment failed because you switched to another browser tab or window.';
+    }
+    if (attempt.failureReason === 'TIME_EXPIRED') {
+      return 'Assessment Failed - Time Expired.';
+    }
+    if (attempt.status === 'PASS' || attempt.status === 'COMPLETED') {
+      return `Assessment already submitted. Score: ${attempt.score ?? 'N/A'}%`;
+    }
+    if (attempt.status === 'FAIL') {
+      return `Assessment already submitted. You scored ${attempt.score ?? 'N/A'}% - below the pass mark.`;
+    }
+    return 'This assessment is already finished.';
+  };
+
+  // Server-authoritative finalization for tab switches and timer expiry.
+  // Reads the latest quiz/attempt from refs so it is safe to call from event
+  // listeners registered once (visibilitychange) or from interval ticks.
+  // Uses currentQuizRef.current (not the React state currentQuiz) because
+  // this function is called from event handlers that close over a stale
+  // render's state — the ref always reflects the latest assignment.
+  const finalizeQuizFailure = async (reason) => {
+    if (quizFinalizedRef.current || !currentQuizRef.current || !quizAttemptRef.current) return;
+    quizFinalizedRef.current = true;
+    if (quizTimerRef.current) clearInterval(quizTimerRef.current);
+    try {
+      const response = await assessmentAPI.failTeacherQuiz(currentQuizRef.current.id, currentStudent.id, reason);
+      const attempt = response.data?.attempt || quizAttemptRef.current;
+      quizAttemptRef.current = attempt;
+      setQuizAttempt(attempt);
+      const msg = buildQuizLockMessage(attempt);
+      quizLockMessageRef.current = msg;
+      setQuizLockMessage(msg);
+    } catch (error) {
+      console.error('Error recording assessment failure:', error);
+      const msg = buildQuizLockMessage({ status: 'FAILED', failureReason: reason });
+      quizLockMessageRef.current = msg;
+      setQuizLockMessage(msg);
+    }
+  };
+
+  // Tab/window switch detection: any switch while the assessment is active
+  // immediately fails it via the backend (server stores the failure).
+  // NOTE: this is the browser-supported mechanism - visibilitychange fires
+  // when the TAB or BROWSER WINDOW is hidden (other tab, other app window,
+  // minimize on most desktop browsers). OS-level events the browser does not
+  // expose cannot be detected, which is a platform limitation.
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden' && quizModalOpen
+          && quizAttemptRef.current?.status === 'IN_PROGRESS'
+          && !quizFinalizedRef.current) {
+        finalizeQuizFailure('TAB_SWITCH');
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quizModalOpen]);
+
+  // Display-only countdown. The SERVER expiry remains the authority: the
+  // countdown is anchored to the attempt's remainingSeconds (computed by the
+  // backend at load time), ticks down locally for display, and self-corrects
+  // when the tab is throttled (browsers pause timers in background tabs) or
+  // the wall clock changes. The backend re-validates expiry on every
+  // status/fail/submit call, so this display can never extend the attempt.
+  useEffect(() => {
+    if (!quizModalOpen) return;
+    const attempt = quizAttemptRef.current;
+    if (!attempt || attempt.status !== 'IN_PROGRESS') return;
+
+    // Anchor once from the server's remainingSeconds; never re-derive from
+    // Date.now() against expiresAt (browser clock skew) and never reset when
+    // this effect re-runs mid-attempt.
+    const anchored = Math.max(0, Math.floor(attempt.remainingSeconds ?? 0));
+    if (anchored <= 0) {
+      setQuizTimeRemaining(0);
+      finalizeQuizFailure('TIME_EXPIRED');
+      return;
+    }
+
+    const anchorEpochMs = Date.now();
+    const tick = () => {
+      // Elapsed is measured locally so wall-clock changes can't stretch it;
+      // throttled background tabs self-correct on the next visible tick.
+      const elapsed = Math.floor((Date.now() - anchorEpochMs) / 1000);
+      const remaining = Math.max(0, anchored - elapsed);
+      setQuizTimeRemaining(remaining);
+      if (remaining <= 0) {
+        finalizeQuizFailure('TIME_EXPIRED');
+      }
+    };
+
+    setQuizTimeRemaining(anchored);
+    quizTimerRef.current = setInterval(tick, 1000);
+    return () => clearInterval(quizTimerRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quizModalOpen, quizAttempt]);
 
   const handleQuizAnswerChange = (questionIndex, answer) => {
     setQuizAnswers(prev => ({
@@ -277,10 +580,12 @@ const StudentPage = () => {
   };
 
   const handleSubmitQuiz = async () => {
-    if (!currentQuiz) return;
-    
-    // Check if all questions are answered
-    const totalQuestions = currentQuiz.quiz_questions?.length || 0;
+    if (!currentQuiz || !quizAttemptRef.current) return;
+    if (quizAttemptRef.current.status !== 'IN_PROGRESS') return;
+    if (quizFinalizedRef.current) return;
+
+    // Check if all questions are answered (against the attempt's own paper)
+    const totalQuestions = quizQuestions.length;
     const answeredQuestions = Object.keys(quizAnswers).length;
     
     if (answeredQuestions < totalQuestions) {
@@ -291,56 +596,63 @@ const StudentPage = () => {
     setQuizSubmitting(true);
     
     try {
-      // Auto-grade MCQ quiz
-      let totalScore = 0;
-      const questionFeedback = [];
-      const pointsPerQuestion = Math.floor(100 / totalQuestions);
-      
-      for (let i = 0; i < totalQuestions; i++) {
-        const question = currentQuiz.quiz_questions[i];
-        const questionText = typeof question === 'string' ? question : question?.question || '';
-        const correctAnswer = question?.correct_answer || '';
-        const studentAnswer = quizAnswers[i] || '';
-        
-        // Check if answer is correct
-        const isCorrect = studentAnswer.trim().toLowerCase() === correctAnswer.trim().toLowerCase();
-        const points = isCorrect ? pointsPerQuestion : 0;
-        totalScore += points;
-        
-        questionFeedback.push({
-          question: questionText,
-          answer: studentAnswer || 'No answer provided',
-          correctAnswer: correctAnswer,
-          feedback: isCorrect ? 'Correct!' : `Incorrect. The correct answer is: ${correctAnswer}`,
-          points: points,
-          isCorrect: isCorrect
-        });
-      }
+      quizFinalizedRef.current = true;
+      if (quizTimerRef.current) clearInterval(quizTimerRef.current);
 
-      const evaluationData = {
-        score: Math.round(totalScore),
-        questionFeedback: questionFeedback,
-        overallFeedback: `You scored ${Math.round(totalScore)}% on this quiz. ${totalScore >= 70 ? 'Great job!' : 'Keep practicing!'}`
-      };
+      // Backend validates: active attempt, not already submitted, before expiry.
+      // It computes the score, decides PASS/FAIL (70% pass mark) and stores
+      // ONE authoritative result record.
+      const response = await assessmentAPI.submitTeacherQuiz(currentQuiz.id, {
+        student_id: currentStudent.id,
+        answers: quizAnswers,
+      });
 
-      // Submit the quiz assignment
-      const submissionData = new FormData();
-      const quizBlob = new Blob([JSON.stringify({
-        answers: Object.values(quizAnswers),
-        score: evaluationData.score,
-        feedback: evaluationData
-      })], { type: 'application/json' });
-      submissionData.append('assignment_file', quizBlob, 'quiz_answers.json');
-      submissionData.append('student_id', currentStudent.id);
-      submissionData.append('quiz_score', evaluationData.score);
+      const result = response.data?.result || {};
+      const evaluation = result.evaluation || {};
 
-      await studentAPI.submitAssignment(currentStudent.id, currentQuiz.id, submissionData);
-      
-      setQuizResults(evaluationData);
+      quizAttemptRef.current = result;
+      setQuizAttempt(result);
+      setQuizResults({
+        score: Math.round(evaluation.score ?? result.score ?? 0),
+        passed: evaluation.passed ?? result.passed,
+        questionFeedback: (evaluation.results || []).map(r => ({
+          question: r.question,
+          answer: r.user_answer || 'No answer provided',
+          correctAnswer: r.correct_answer,
+          category: r.category,
+          isCorrect: r.status === 'correct',
+          status: r.status,
+        })),
+        overallFeedback: evaluation.performance?.message || `You scored ${Math.round(evaluation.score ?? 0)}%.`,
+      });
       await loadStudentData();
     } catch (error) {
-      console.error('Error submitting quiz:', error);
-      alert('Failed to submit quiz. Please try again.');
+      const data = error.response?.data || {};
+      if (error.response?.status === 409) {
+        // Backend rejected the submission: expired, failed (tab switch) or
+        // already submitted. The attempt is terminal - show the locked state
+        // and never allow a retry (BUG 8: a submission that arrives after the
+        // server deadline is stored as FAILED/TIME_EXPIRED by the backend).
+        if (data.attempt) {
+          quizAttemptRef.current = data.attempt;
+          setQuizAttempt(data.attempt);
+        }
+        const expired = data.failureReason === 'TIME_EXPIRED'
+          || data.attempt?.failureReason === 'TIME_EXPIRED';
+        const msg = expired
+          ? 'Assessment Failed - Time Expired.'
+          : (data.error || data.failureReason === 'TAB_SWITCH'
+            ? 'Assessment failed because you switched to another browser tab or window.'
+            : (data.error || 'This assessment has already been submitted.'));
+        quizLockMessageRef.current = msg;
+        setQuizLockMessage(msg);
+      } else {
+        console.error('Error submitting quiz:', error);
+        // Transient error (network/server): allow retry ONLY if the backend
+        // could not have finalized the attempt.
+        quizFinalizedRef.current = false;
+        alert('Failed to submit quiz. Please try again.');
+      }
     } finally {
       setQuizSubmitting(false);
     }
@@ -503,10 +815,18 @@ const StudentPage = () => {
   };
 
   const closeQuizModal = () => {
+    if (quizTimerRef.current) clearInterval(quizTimerRef.current);
     setQuizModalOpen(false);
     setCurrentQuiz(null);
+    currentQuizRef.current = null;
+    setQuizQuestions([]);
     setQuizAnswers({});
     setQuizResults(null);
+    setQuizAttempt(null);
+    quizAttemptRef.current = null;
+    setQuizLockMessage(null);
+    quizLockMessageRef.current = null;
+    quizFinalizedRef.current = false;
   };
 
   const programmingLanguages = [
@@ -662,16 +982,14 @@ const StudentPage = () => {
   const startGDRound = async () => {
     setGdRoundLoading(true);
     try {
-      // Fetch available GD topics and create a mock GD round
-      const response = await fetch(`${API_URL}/gd/topics`);
-      const data = await response.json();
+      const response = await gdAPI.getTopics();
+      const data = response.data;
       
       if (data.success) {
-        // Create a practice GD round
-        const mockGDRound = {
-          _id: 'practice_' + Date.now(),
+        // Schedule a practice round on the backend so it gets a valid Mongo ObjectId
+        const scheduleResp = await gdAPI.schedulePracticeRound({
           title: 'Practice GD Round',
-          duration: 20, // minutes
+          duration: 20,
           allow_topic_selection: true,
           available_topics: data.topics || [],
           num_ai_agents: 7,
@@ -682,16 +1000,17 @@ const StudentPage = () => {
             logical_reasoning: { weight: 20, description: "Quality of arguments and critical thinking" },
             content_relevance: { weight: 20, description: "Knowledge and relevance of points made" },
             listening_team_dynamics: { weight: 15, description: "Active listening and team collaboration" }
-          },
-          status: 'scheduled'
-        };
-        
-        setCurrentGDRound(mockGDRound);
-        setGdRoundOpen(true);
+          }
+        });
+
+        if (scheduleResp.data.success) {
+          setCurrentGDRound(scheduleResp.data.gd_round);
+          setGdRoundOpen(true);
+        }
       }
     } catch (error) {
       console.error('Error starting GD round:', error);
-      alert('Failed to start GD round. Please try again.');
+      alert(error.response?.data?.error || 'Failed to start GD round. Please try again.');
     } finally {
       setGdRoundLoading(false);
     }
@@ -717,46 +1036,158 @@ const StudentPage = () => {
 
   const speakText = (text) => {
     if (synthRef.current && interviewMode === 'voice') {
-      // Cancel any ongoing speech
+      // Cancel any ongoing speech so the previous question's TTS never
+      // overlaps or repeats when moving to the next question.
       synthRef.current.cancel();
-      
+
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.rate = 0.9;
       utterance.pitch = 1;
       utterance.volume = 1;
-      
+
       synthRef.current.speak(utterance);
     }
   };
 
+  // The interviewer speaks ONLY the actual question - no greetings, no
+  // introductions, no "Question N" prefixes, no AI feedback boilerplate
+  // (removed at the source: what is passed here is exactly what is spoken).
+  const speakQuestion = (questionText) => {
+    if (!questionText) return;
+    console.log('[INTERVIEW] TTS input:', questionText);
+    speakText(questionText);
+  };  // RESUME GATEKEEPER: mandatory resume upload step before any interview
+  // session starts. The file must upload AND parse successfully (the backend
+  // extracts the text server-side and fails the request when it cannot) -
+  // only then is the interview unlocked. Optional auto-start continues
+  // straight into the interview the student clicked.
+  const handleInterviewResumeUpload = async (autoStartMode = null) => {
+    const fileInput = interviewResumeInputRef.current;
+    if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
+      alert('Please select your resume file (PDF or DOCX) to continue.');
+      return;
+    }
+    const formData = new FormData();
+    formData.append('resume', fileInput.files[0]);
+    setInterviewResumeUploading(true);
+    try {
+      await studentAPI.uploadResume(currentStudent.id, formData);
+      setInterviewResumeReady(true);
+      setInterviewResumeGate(false);
+      const mode = pendingInterviewMode;
+      setPendingInterviewMode(null);
+      // Refresh dashboard state (resume score etc.) after the upload.
+      loadStudentData();
+      if (autoStartMode || mode) {
+        await startInterview(autoStartMode || mode);
+      }
+    } catch (error) {
+      console.error('Error uploading resume for interview:', error);
+      alert(error.response?.data?.error || 'Resume upload failed. Please try again.');
+    } finally {
+      setInterviewResumeUploading(false);
+    }
+  };
+
+  // Entry point for both Start buttons: holds the student at the mandatory
+  // "Upload Resume First" modal until a resume is actually on file.
+  const openInterviewWithResumeGate = (mode) => {
+    if (interviewResumeReady === false) {
+      setPendingInterviewMode(mode);
+      setInterviewResumeGate(true);
+      return;
+    }
+    startInterview(mode);
+  };
+
   const startInterview = async (mode) => {
+    // GATE: no resume on file -> force the upload step first.
+    if (interviewResumeReady === false) {
+      setInterviewResumeGate(true);
+      return;
+    }
     setInterviewStarting(true);
     setInterviewMode(mode);
     setInterviewModalOpen(true);
+    setInterviewResults(null);
+    interviewFinalizedRef.current = false;
+
+    // Refresh-safe: an unfinished session for this student is resumed
+    // (questions + answered turns come back from the server) instead of
+    // starting a brand-new interview.
+    const savedSessionId = localStorage.getItem('activeInterviewSessionId');
+    if (savedSessionId) {
+      try {
+        const sessionRes = await interviewAPI.getSession(savedSessionId);
+        const session = sessionRes.data?.session;
+        if (session && session.status === 'in_progress') {
+          setInterviewSessionId(session.sessionId);
+          setInterviewQuestions(session.questions || []);
+          setUserAnswers(session.answers || []);
+          setCurrentQuestionIndex(session.currentQuestionIndex || 0);
+          setInterviewResuming(true);
+          setInterviewStarting(false);
+          setTimeRemaining(interviewDuration * 60);
+          setTimerActive(true);
+          return;
+        }
+        if (session && session.status === 'completed') {
+          localStorage.removeItem('activeInterviewSessionId');
+        }
+      } catch (error) {
+        // Session is gone/expired - fall through and start a fresh one.
+        localStorage.removeItem('activeInterviewSessionId');
+      }
+    }
+
     setCurrentQuestionIndex(0);
     setUserAnswers([]);
-    setInterviewResults(null);
+    setCurrentAnswer('');
+    setInterviewResuming(false);
     
     try {
-      const response = await interviewAPI.startInterview({ user_id: currentStudent.id });
-      const questions = response.data.questions || [];
+      const response = await interviewAPI.startInterview({
+        user_id: currentStudent.id,
+        mode,
+        session_id: null,
+      });
+      const data = response.data || {};
+      const questions = data.questions || data.session?.questions || [];
+      const sessionId = data.session?.sessionId || null;
       setInterviewQuestions(questions);
+      setInterviewSessionId(sessionId);
+      if (sessionId) {
+        localStorage.setItem('activeInterviewSessionId', sessionId);
+      }
       setTimeRemaining(interviewDuration * 60);
       setTimerActive(true);
       
       if (mode === 'voice') {
-        initializeSpeechRecognition();
-        // Speak the first question
+        // [INTERVIEW] Browser SpeechRecognition is deliberately NOT used for
+        // the Mock Interview: it produced 'Speech recognition error: network'
+        // and is cloud-dependent. The Whisper pipeline (MediaRecorder ->
+        // /gd/transcribe -> faster-whisper) is the sole STT authority here.
+        // Speak ONLY the first actual question - no greeting/introduction.
         setTimeout(() => {
           if (questions.length > 0) {
-            speakText(`Question 1. ${questions[0]}`);
+            speakQuestion(questions[0]);
           }
         }, 500);
       }
     } catch (error) {
       console.error('Error starting interview:', error);
-      alert('Failed to start interview.');
-      setInterviewModalOpen(false);
+      // Server-side RESUME GATEWAY: if the backend rejects the start because
+      // no resume is on file (code RESUME_REQUIRED), flip to the mandatory
+      // upload step instead of a dead-end alert.
+      if (error.response?.status === 400 && error.response?.data?.code === 'RESUME_REQUIRED') {
+        setInterviewResumeReady(false);
+        setInterviewResumeGate(true);
+        setInterviewModalOpen(false);
+        setInterviewMode(null);
+      } else {
+        alert(error.response?.data?.error || 'Failed to start interview.');
+        setInterviewModalOpen(false);
+      }
     } finally {
       setInterviewStarting(false);
     }
@@ -787,81 +1218,260 @@ const StudentPage = () => {
     };
 
     recognitionRef.current.onerror = (event) => {
-      console.error('Speech recognition error:', event.error);
-      setIsRecording(false);
+      // Browser STT failure must NOT touch the recording state: the
+      // MediaRecorder + Whisper pipeline is the authority. Previously this
+      // handler called setIsRecording(false) while the recorder kept
+      // capturing, desyncing the Start/Stop button and allowing a second
+      // recorder to be created (the corrupt-blob source behind the 422).
+      console.warn('Speech recognition error:', event.error);
     };
   };
 
-  const toggleRecording = () => {
-    if (!recognitionRef.current) {
-      initializeSpeechRecognition();
+  const transcribeInterviewAudio = async (audioBlob) => {
+    // Blob validation: the backend returns HTTP 422 ONLY for audio it cannot
+    // decode (stt_service.transcribe -> AudioValidationError). A corrupt/empty
+    // blob must never reach the API.
+    if (!audioBlob || audioBlob.size === 0) {
+      console.warn('[INTERVIEW] transcription aborted - empty audio blob (size 0)');
       return;
     }
+    console.log('[INTERVIEW] sending audio to /gd/transcribe');
+    console.log('[INTERVIEW] blob type:', audioBlob.type);
+    console.log('[INTERVIEW] blob size:', audioBlob.size, 'bytes');
+    voiceTranscribePromiseRef.current = (async () => {
+      try {
+        // REUSES the existing /gd/transcribe endpoint and its shared
+        // faster-whisper model singleton (stt_service.py).
+        const response = await interviewAPI.transcribeAudio(audioBlob);
+        const data = response.data || {};
+        console.log('[INTERVIEW] transcription response:', data);
+        const text = (data.text || data.transcript || '').trim();
+        console.log('[INTERVIEW] transcript:', text || '(empty)');
+        // Track the STT quality for this turn (VALID / LOW_CONFIDENCE /
+        // NO_SPEECH / INVALID) so empty or low-confidence transcripts are
+        // never saved or evaluated as a meaningful answer.
+        voiceTranscriptStatusRef.current = text ? (data.status || 'VALID') : (data.status || 'NO_SPEECH');
+        if (text) {
+          // The Whisper transcript REPLACES any partial browser speech text
+          // (same approach as GDRound) and becomes the user's answer (BUG 13).
+          voiceTranscriptRef.current = text;
+          setCurrentAnswer(text);
+          if (data.status === 'LOW_CONFIDENCE' && data.warning) {
+            alert(data.warning);
+          }
+        } else {
+          // No usable speech: keep the answer EMPTY (never substitute text).
+          voiceTranscriptRef.current = null;
+          setCurrentAnswer('');
+          alert(data.message || 'No clear speech was detected. Please try again.');
+        }
+      } catch (error) {
+        console.error('[INTERVIEW] Error transcribing interview audio:', error);
+        const detail = error.response?.data?.message || error.response?.data?.error;
+        alert(detail || 'Speech transcription failed. Please try recording again.');
+      } finally {
+        voiceTranscribePromiseRef.current = null;
+      }
+    })();
+    return voiceTranscribePromiseRef.current;
+  };
 
-    if (isRecording) {
-      recognitionRef.current.stop();
-      setIsRecording(false);
-    } else {
-      recognitionRef.current.start();
-      setIsRecording(true);
+  const stopInterviewRecording = () => {
+    // Stop the MediaRecorder only. We deliberately do NOT call
+    // recognitionRef.current.stop() here: stopping a SpeechRecognition
+    // instance that is already stopped (or was never started for the
+    // interview) fires onerror with event.error === 'network', which is
+    // the source of the "Speech recognition error: network" console message.
+    // The Mock Interview uses the Whisper pipeline exclusively — browser
+    // SpeechRecognition is not used and must not be touched here.
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      try { mediaRecorderRef.current.stop(); } catch (e) { /* already stopped */ }
     }
+    // Do NOT null the ref here: onstop fires asynchronously AFTER stop()
+    // returns. The onstop closure captures the local `recorder` variable so
+    // it still works correctly — setting the ref to null immediately is safe
+    // for the ref bookkeeping but was previously causing confusion. Keep the
+    // null assignment so the ref is cleaned up, but after the async flush.
+    mediaRecorderRef.current = null;
+    // NOTE: recognitionRef.current is intentionally NOT stopped here.
+    // See comment above. If a SpeechRecognition instance exists from an
+    // earlier feature, it will be stopped only in closeInterviewModal().
+  };
+
+  const releaseInterviewStream = () => {
+    if (interviewStreamRef.current) {
+      interviewStreamRef.current.getTracks().forEach(t => t.stop());
+      interviewStreamRef.current = null;
+    }
+    mediaRecorderRef.current = null;
+    audioChunksRef.current = [];
+  };
+
+  const toggleRecording = async () => {
+    // Guard on the SYNC ref, not the async `isRecording` state: a rapid
+    // double-click previously passed the state check twice and created TWO
+    // concurrent MediaRecorders on one stream - the orphaned recorder produced
+    // corrupt webm that the backend rejected with HTTP 422.
+    if (isRecordingRef.current) {
+      isRecordingRef.current = false;
+      setIsRecording(false);
+      console.log('[INTERVIEW] recording stopped');
+      stopInterviewRecording();
+      return;
+    }
+    if (isRecordingRef.current === false && mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      // Stale recorder from a desynced previous turn: discard it cleanly
+      // before starting a fresh one (never two live recorders at once).
+      try { mediaRecorderRef.current.onstop = null; mediaRecorderRef.current.stop(); } catch (e) { /* already stopped */ }
+      mediaRecorderRef.current = null;
+    }
+    isRecordingRef.current = true;
+
+    // New turn: reset any previous transcript.
+    voiceTranscriptRef.current = null;
+    voiceTranscriptStatusRef.current = null;
+    setCurrentAnswer('');
+
+    // 1. Request microphone permission and record the user's speech.
+    //    Independent getUserMedia: the app mic does NOT depend on Google Meet
+    //    or any other app's microphone state - only on browser permission.
+    let stream = interviewStreamRef.current;
+    if (stream && stream.getAudioTracks().every(t => t.readyState !== 'live')) {
+      // Dead stream from a previous turn: release it and acquire a fresh one.
+      releaseInterviewStream();
+      stream = null;
+    }
+    if (!stream) {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        interviewStreamRef.current = stream;
+      } catch (error) {
+        console.error('[INTERVIEW] Microphone permission error:', error);
+        isRecordingRef.current = false;
+        setIsRecording(false);
+        alert('Microphone access is required for the voice interview. Please allow microphone access and try again.');
+        return;
+      }
+    }
+
+    // 2. Record with MediaRecorder (the audio is transcribed server-side on stop).
+    //    IMPORTANT: recorder.start(250) uses a 250ms timeslice so ondataavailable
+    //    fires every 250ms, producing many small valid chunks. This matches
+    //    GDRound.js (recorder.start(250)) which works reliably with /gd/transcribe.
+    //    WITHOUT a timeslice, ondataavailable fires only once on .stop(), and the
+    //    single-chunk WebM can be corrupt/undecodable -> backend HTTP 422.
+    if (window.MediaRecorder) {
+      try {
+        const chunks = [];
+        audioChunksRef.current = chunks;
+        const mimeUsed = window.MediaRecorder.isTypeSupported
+          ? ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus']
+              .find(m => window.MediaRecorder.isTypeSupported(m))
+          : null;
+        let recorder;
+        try {
+          recorder = new MediaRecorder(stream, mimeUsed ? { mimeType: mimeUsed } : undefined);
+        } catch (recErr) {
+          recorder = new MediaRecorder(stream);
+        }
+        recorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunks.push(e.data); };
+        recorder.onstop = () => {
+          // Use the recorder's ACTUAL output mime type for the Blob - building
+          // the blob from a mismatched type can produce an undecodable file.
+          const blob = new Blob(chunks, { type: recorder.mimeType || mimeUsed || 'audio/webm' });
+          transcribeInterviewAudio(blob);
+        };
+        mediaRecorderRef.current = recorder;
+        // Use 250ms timeslice (matching GDRound.js recorder.start(250)) so that
+        // ondataavailable fires every 250ms. This produces many small valid WebM
+        // chunks instead of a single potentially-corrupt chunk, preventing the
+        // backend HTTP 422 "Audio could not be decoded" error.
+        recorder.start(250);
+        console.log('[INTERVIEW] recording started');
+      } catch (recError) {
+        console.error('[INTERVIEW] MediaRecorder initialization failed:', recError);
+        isRecordingRef.current = false;
+        setIsRecording(false);
+        return;
+      }
+    }
+
+    // 3. Browser speech recognition is DISABLED for the Mock Interview
+    //    (requirement: no 'Speech recognition error: network'). The Whisper
+    //    transcript returned by /gd/transcribe is the one and only transcript
+    //    used as the interview answer.
+    setIsRecording(true);
   };
 
   const submitAnswer = async () => {
-    const answer = currentAnswer.trim();
-    if (!answer && interviewMode === 'text') {
-      alert('Please provide an answer before submitting.');
+    // Voice mode: wait for any in-flight Whisper transcription to land and
+    // use the ACTUAL transcript as the answer (BUG 13).
+    if (interviewMode === 'voice' && voiceTranscribePromiseRef.current) {
+      try { await voiceTranscribePromiseRef.current; } catch (e) { /* handled */ }
+    }
+    const answer = ((interviewMode === 'voice' && voiceTranscriptRef.current) || currentAnswer).trim();
+    const transcriptStatus = interviewMode === 'voice' ? voiceTranscriptStatusRef.current : null;
+    voiceTranscriptRef.current = null;
+    voiceTranscriptStatusRef.current = null;
+
+    // An empty transcript is NOT an answer: block submission (both modes) so
+    // the turn is retried instead of being saved as a fake "No answer provided"
+    // turn that could pollute the evaluation.
+    if (!answer) {
+      alert(interviewMode === 'voice'
+        ? 'No clear speech was detected. Please try again.'
+        : 'Please provide an answer before submitting.');
       return;
     }
 
-    const newAnswers = [...userAnswers, answer || 'No answer provided'];
+    const newAnswers = [...userAnswers, answer];
     setUserAnswers(newAnswers);
     setCurrentAnswer('');
     
-    if (isRecording) {
-      recognitionRef.current.stop();
+    if (isRecording || isRecordingRef.current) {
+      // Stop the WHOLE recording pipeline (recorder + recognition). Stopping
+      // only recognition previously left the MediaRecorder capturing across
+      // the question transition, polluting the next answer's audio.
+      isRecordingRef.current = false;
       setIsRecording(false);
+      stopInterviewRecording();
+    }
+
+    // Persist the turn server-side so a refresh mid-interview keeps progress.
+    // The payload carries the question index and STT status so the backend can
+    // store a structured per-question turn (never conflating questions).
+    if (interviewSessionId) {
+      console.log('[INTERVIEW] saving answer: question', currentQuestionIndex,
+        'status:', transcriptStatus || 'text');
+      interviewAPI.saveAnswer({
+        session_id: interviewSessionId,
+        user_id: currentStudent.id,
+        question_index: currentQuestionIndex,
+        answer,
+        transcript_status: transcriptStatus || undefined,
+      })
+        .then((res) => console.log('[INTERVIEW] answer save response:', res.data?.success))
+        .catch(err => {
+          console.error('[INTERVIEW] answer save failed:',
+            err.response?.status, err.response?.data?.error || err.message);
+        });
     }
 
     if (currentQuestionIndex < interviewQuestions.length - 1) {
       const nextIndex = currentQuestionIndex + 1;
-      
-      // In voice mode, get AI feedback and speak it
+
+      // Voice mode: speak ONLY the next question. The old flow injected AI
+      // feedback ("Great answer! Now, question 2. ...") into the TTS - that
+      // boilerplate is removed at the source per the TTS requirement.
       if (interviewMode === 'voice') {
-        try {
-          // Get AI feedback for the answer
-          const feedbackResponse = await chatbotAPI.sendMessage({
-            message: `Provide a brief, encouraging 1-2 sentence feedback for this interview answer. Question: "${interviewQuestions[currentQuestionIndex]}" Answer: "${answer}". Be supportive and constructive.`,
-            user_id: currentStudent.id
-          });
-          
-          const feedback = feedbackResponse.data.response || "Thank you for your answer.";
-          
-          // Speak the feedback and then the next question
-          speakText(`${feedback} Now, question ${nextIndex + 1}. ${interviewQuestions[nextIndex]}`);
-        } catch (error) {
-          console.error('Error getting feedback:', error);
-          speakText(`Thank you. Question ${nextIndex + 1}. ${interviewQuestions[nextIndex]}`);
-        }
+        speakQuestion(interviewQuestions[nextIndex]);
       }
-      
+
       setCurrentQuestionIndex(nextIndex);
     } else {
-      // Speak completion message in voice mode
+      // Voice mode: stop any remaining speech; no closing chatter is spoken.
       if (interviewMode === 'voice') {
-        try {
-          // Get final feedback
-          const feedbackResponse = await chatbotAPI.sendMessage({
-            message: `Provide a brief, encouraging 1-2 sentence feedback for this final interview answer. Question: "${interviewQuestions[currentQuestionIndex]}" Answer: "${answer}". Be supportive.`,
-            user_id: currentStudent.id
-          });
-          
-          const feedback = feedbackResponse.data.response || "Thank you for your answer.";
-          speakText(`${feedback} Your interview is complete. Please wait while we evaluate your responses.`);
-        } catch (error) {
-          console.error('Error getting feedback:', error);
-          speakText('Thank you. Your interview is complete. Please wait while we evaluate your responses.');
-        }
+        if (synthRef.current) synthRef.current.cancel();
       }
       handleFinishInterview(newAnswers);
     }
@@ -872,29 +1482,42 @@ const StudentPage = () => {
   };
 
   const handleFinishInterview = async (answers = userAnswers) => {
+    if (interviewFinalizedRef.current) return;
+    interviewFinalizedRef.current = true;
     setInterviewEvaluating(true);
     if (timerIntervalRef.current) {
       clearInterval(timerIntervalRef.current);
     }
     setTimerActive(false);
     
-    if (recognitionRef.current && isRecording) {
-      recognitionRef.current.stop();
-      setIsRecording(false);
-    }
+    // Stop recording pipeline first, then stop recognition (order matters:
+    // stopping recognition while recorder is active causes 'network' error).
+    isRecordingRef.current = false;
+    setIsRecording(false);
+    stopInterviewRecording();
+    releaseInterviewStream();
 
     try {
       const response = await interviewAPI.submitAnswers({
         questions: interviewQuestions,
         answers: answers,
         studentId: currentStudent.id,
+        user_id: currentStudent.id,
+        session_id: interviewSessionId,
       });
       
-      setInterviewResults(response.data);
+      const data = response.data || {};
+      console.log(`[INTERVIEW] Evaluation completed. Final score: ${data.score}. ` +
+        `Final status: ${data.status || (data.passed ? 'PASS' : 'FAIL')}`);
+      setInterviewResults(data);
+      localStorage.removeItem('activeInterviewSessionId');
+      // Re-fetch student data so the Profile/progress section reflects the
+      // freshly persisted score/status immediately (no stale state).
       await loadStudentData();
     } catch (error) {
       console.error('Error evaluating interview:', error);
       alert('Failed to evaluate interview.');
+      interviewFinalizedRef.current = false; // allow retry on transient errors
     } finally {
       setInterviewEvaluating(false);
     }
@@ -906,10 +1529,22 @@ const StudentPage = () => {
     }
     setTimerActive(false);
     
-    if (recognitionRef.current && isRecording) {
-      recognitionRef.current.stop();
+    // Stop browser SpeechRecognition cleanly here (not during recording) so
+    // it does NOT fire 'network' error while the MediaRecorder is active.
+    // After closing the modal we also null the ref to prevent stale state
+    // across modal open/close cycles.
+    if (recognitionRef.current) {
+      try { recognitionRef.current.stop(); } catch (e) { /* already stopped - ignore */ }
+      recognitionRef.current = null;
+    }
+    if (isRecording) {
       setIsRecording(false);
     }
+    isRecordingRef.current = false;
+    stopInterviewRecording();
+    releaseInterviewStream();
+    voiceTranscriptRef.current = null;
+    voiceTranscriptStatusRef.current = null;
     
     // Stop any ongoing speech
     if (synthRef.current) {
@@ -922,6 +1557,9 @@ const StudentPage = () => {
     setUserAnswers([]);
     setCurrentAnswer('');
     setInterviewResults(null);
+    setInterviewSessionId(null);
+    setInterviewResuming(false);
+    interviewFinalizedRef.current = false;
   };
 
   const formatTime = (seconds) => {
@@ -1052,7 +1690,7 @@ const StudentPage = () => {
 
                 {/* Progress Stats */}
                 <h3 className="text-2xl font-bold mb-4 text-gray-800">My Progress</h3>
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                   <div className="bg-white p-6 rounded-xl shadow-md border-l-4 border-blue-500">
                     <h4 className="text-lg font-semibold text-gray-600">Assignments Submitted</h4>
                     <p className="text-4xl font-bold text-blue-600 mt-2">
@@ -1065,6 +1703,18 @@ const StudentPage = () => {
                     <p className="text-4xl font-bold text-green-600 mt-2">
                       {progress?.interviewScore ? `${progress.interviewScore}%` : 'N/A'}
                     </p>
+                    {/* PASS/FAIL recorded by /api/interview/evaluate - shown
+                        only when a result actually exists (no-result state
+                        stays clean). */}
+                    {progress?.interviewStatus && (
+                      <p className={`text-sm font-bold mt-1 ${
+                        progress.interviewStatus === 'PASS'
+                          ? 'text-green-700'
+                          : 'text-red-600'
+                      }`}>
+                        {progress.interviewStatus === 'PASS' ? '✓ PASSED' : '✗ FAILED'}
+                      </p>
+                    )}
                   </div>
                   
                   <div className="bg-white p-6 rounded-xl shadow-md border-l-4 border-purple-500">
@@ -1072,6 +1722,9 @@ const StudentPage = () => {
                     <p className="text-4xl font-bold text-purple-600 mt-2">
                       {progress?.resumeScore ? `${progress.resumeScore}%` : 'N/A'}
                     </p>
+                    {!progress?.resumeScore && (
+                      <p className="text-sm text-gray-500 mt-1">Upload your resume to get an ATS score</p>
+                    )}
                   </div>
                   
                   <div className="bg-white p-6 rounded-xl shadow-md border-l-4 border-orange-500">
@@ -1080,7 +1733,22 @@ const StudentPage = () => {
                       {progress?.quizScore || progress?.averageQuizScore ? `${Math.round(progress.quizScore || progress.averageQuizScore)}%` : 'N/A'}
                     </p>
                     {progress?.totalQuizzes > 0 && (
-                      <p className="text-sm text-gray-500 mt-1">{progress.totalQuizzes} quiz{progress.totalQuizzes !== 1 ? 'zes' : ''} taken</p>
+                      <p className="text-sm text-gray-500 mt-1">{progress.totalQuizzes} test{progress.totalQuizzes !== 1 ? 's' : ''} taken</p>
+                    )}
+                  </div>
+
+                  {/* Aptitude test average - synced from the training-section
+                      attempts (server-persisted on every submit/fail). */}
+                  <div className="bg-white p-6 rounded-xl shadow-md border-l-4 border-teal-500">
+                    <h4 className="text-lg font-semibold text-gray-600">Aptitude Test Score</h4>
+                    <p className="text-4xl font-bold text-teal-600 mt-2">
+                      {progress?.aptitudeScore ? `${Math.round(progress.aptitudeScore)}%` : 'N/A'}
+                    </p>
+                    {progress?.totalAptitudeTests > 0 && (
+                      <p className="text-sm text-gray-500 mt-1">
+                        {progress.totalAptitudeTests} test{progress.totalAptitudeTests !== 1 ? 's' : ''} taken
+                        {progress.aptitudeBestScore != null && ` • best ${Math.round(progress.aptitudeBestScore)}%`}
+                      </p>
                     )}
                   </div>
                 </div>
@@ -1165,11 +1833,44 @@ const StudentPage = () => {
                         ) : (
                           <div className="mt-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
                             <p className="text-sm text-gray-700">
-                              <span className="font-medium">Status:</span> Assignment submitted successfully
+                              <span className="font-medium">Status:</span>{' '}
+                              {assignment.type === 'Quiz'
+                                ? (assignment.quiz_failure_reason === 'TAB_SWITCH'
+                                  ? 'Assessment failed - tab switch detected'
+                                  : assignment.quiz_failure_reason === 'TIME_EXPIRED'
+                                  ? 'Assessment failed - time expired'
+                                  : assignment.quiz_status === 'PASS' || assignment.quiz_passed === true
+                                  ? 'Quiz completed - PASSED'
+                                  : assignment.quiz_status === 'FAIL' || assignment.quiz_passed === false
+                                  ? 'Quiz completed - FAILED'
+                                  : 'Quiz submitted')
+                                : 'Assignment submitted successfully'}
                               {assignment.submittedAt && (
                                 <span className="text-gray-500"> on {new Date(assignment.submittedAt).toLocaleDateString()}</span>
                               )}
                             </p>
+
+                            {/* Quiz result actions: review answers and/or
+                                retake (a retake archives the old attempt
+                                server-side and starts clean). */}
+                            {assignment.type === 'Quiz' && (
+                              <div className="mt-3 flex flex-wrap gap-3">
+                                {assignment.quiz_evaluation?.results?.length > 0 && (
+                                  <button
+                                    onClick={() => handleViewQuizResult(assignment)}
+                                    className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"
+                                  >
+                                    View Answer Review
+                                  </button>
+                                )}
+                                <button
+                                  onClick={() => handleStartQuiz(assignment, true)}
+                                  className="px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700"
+                                >
+                                  🔄 Retake Quiz
+                                </button>
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
@@ -1231,71 +1932,149 @@ const StudentPage = () => {
             {activeTab === 'interview' && (
               <div className="fade-in">
                 <h2 className="text-3xl font-bold mb-6 text-gray-800">AI Mock Interview</h2>
-                
-                <div className="bg-white p-6 rounded-xl shadow-md mb-6">
-                  <h3 className="text-xl font-bold mb-4 text-gray-700">Select Interview Duration</h3>
-                  <div className="grid grid-cols-3 gap-4">
-                    {[10, 20, 30].map(duration => (
-                      <button
-                        key={duration}
-                        onClick={() => setInterviewDuration(duration)}
-                        className={`px-6 py-3 rounded-lg font-medium transition-colors ${
-                          interviewDuration === duration
-                            ? 'bg-blue-500 text-white'
-                            : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                        }`}
-                      >
-                        {duration} minutes
-                      </button>
-                    ))}
-                  </div>
-                </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="bg-white p-8 rounded-xl shadow-md text-center">
-                    <div className="flex justify-center mb-4">
-                      <div className="bg-blue-100 p-6 rounded-full">
-                        <MessageSquare className="text-blue-600" size={48} />
+                {/* =====================================================
+                    RESUME UPLOAD GATEWAY - MANDATORY STEP 1
+                    The duration/type selection and Start buttons are NOT
+                    rendered until a resume is on file. Questions are
+                    generated from the resume text (context injection into
+                    the LLM prompt), so this is a hard prerequisite.
+                    Three REAL states: checking (null) / upload required
+                    (false) / ready (true). No fake success banner.
+                    ===================================================== */}
+                {interviewCheckingResume ? (
+                  <div className="bg-gray-50 border border-gray-200 p-6 rounded-xl mb-6 flex items-center gap-3">
+                    <div className="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"></div>
+                    <p className="text-sm text-gray-600 font-medium">Checking resume status...</p>
+                  </div>
+                ) : interviewResumeReady === false ? (
+                  <div className="bg-amber-50 border-2 border-amber-300 p-6 rounded-xl mb-6">
+                    <div className="flex items-center gap-3 mb-4">
+                      <div className="bg-amber-100 p-3 rounded-full">
+                        <Upload size={26} className="text-amber-600" />
+                      </div>
+                      <div>
+                        <h3 className="text-xl font-bold text-gray-800">
+                          Step 1: Upload Your Resume (Required)
+                        </h3>
+                        <p className="text-sm text-amber-700 font-medium">
+                          You must complete this step before you can choose an interview duration or type.
+                        </p>
                       </div>
                     </div>
-                    <h3 className="text-xl font-bold mb-3 text-gray-800">Text Interview</h3>
-                    <p className="text-gray-600 mb-6">Answer questions by typing your responses</p>
+                    <p className="text-gray-700 mb-4">
+                      Your AI interview questions are generated from your resume —
+                      projects, skills, education and experience. Upload it once
+                      and your mock interview will be tailored to YOU instead of
+                      generic questions.
+                    </p>
+                    <ul className="text-sm text-gray-600 mb-5 list-disc list-inside space-y-1">
+                      <li>Accepted formats: PDF or DOCX</li>
+                      <li>The resume text is parsed and passed to the AI interviewer</li>
+                      <li>You'll also get an ATS match score for your profile</li>
+                    </ul>
+                    <input
+                      type="file"
+                      ref={interviewResumeInputRef}
+                      accept=".pdf,.docx"
+                      className="w-full text-sm text-gray-600 mb-3 file:mr-4 file:py-3 file:px-6 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-amber-100 file:text-amber-800 hover:file:bg-amber-200"
+                    />
                     <button
-                      onClick={() => startInterview('text')}
-                      disabled={interviewStarting}
-                      className="bg-blue-500 hover:bg-blue-600 text-white px-8 py-3 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 mx-auto"
+                      onClick={handleInterviewResumeUpload}
+                      disabled={interviewResumeUploading}
+                      className="bg-amber-500 hover:bg-amber-600 text-white px-6 py-3 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                     >
-                      {interviewStarting ? (
+                      {interviewResumeUploading ? (
                         <>
                           <div className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent"></div>
-                          Starting...
+                          Uploading &amp; Analyzing...
                         </>
-                      ) : 'Start Text Interview'}
+                      ) : 'Upload Resume to Unlock Interview'}
                     </button>
                   </div>
+                ) : (
+                  <>
+                    {/* Step 1 complete - shown ONLY after the database check
+                        (or a fresh upload) confirmed a resume exists. This
+                        banner is backed by the resumeUploaded flag, never
+                        fabricated. */}
+                    {interviewResumeReady === true && (
+                      <div className="bg-green-50 border border-green-300 p-4 rounded-xl mb-6 flex items-center gap-3">
+                        <CheckCircle size={20} className="text-green-600" />
+                        <p className="text-sm text-green-800">
+                          <span className="font-semibold">Resume on file.</span>{' '}
+                          Interview questions will be generated from your resume. You can re-upload an updated resume anytime from the Resume Analysis tab.
+                        </p>
+                      </div>
+                    )}
 
-                  <div className="bg-white p-8 rounded-xl shadow-md text-center">
-                    <div className="flex justify-center mb-4">
-                      <div className="bg-green-100 p-6 rounded-full">
-                        <Mic className="text-green-600" size={48} />
+                    {/* STEP 2: duration + type selection (locked until Step 1) */}
+                    <div className="bg-white p-6 rounded-xl shadow-md mb-6">
+                      <h3 className="text-xl font-bold mb-4 text-gray-700">Select Interview Duration</h3>
+                      <div className="grid grid-cols-3 gap-4">
+                        {[10, 20, 30].map(duration => (
+                          <button
+                            key={duration}
+                            onClick={() => setInterviewDuration(duration)}
+                            className={`px-6 py-3 rounded-lg font-medium transition-colors ${
+                              interviewDuration === duration
+                                ? 'bg-blue-500 text-white'
+                                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                            }`}
+                          >
+                            {duration} minutes
+                          </button>
+                        ))}
                       </div>
                     </div>
-                    <h3 className="text-xl font-bold mb-3 text-gray-800">Voice Interview</h3>
-                    <p className="text-gray-600 mb-6">Answer questions using your voice</p>
-                    <button
-                      onClick={() => startInterview('voice')}
-                      disabled={interviewStarting}
-                      className="bg-green-500 hover:bg-green-600 text-white px-8 py-3 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 mx-auto"
-                    >
-                      {interviewStarting ? (
-                        <>
-                          <div className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent"></div>
-                          Starting...
-                        </>
-                      ) : 'Start Voice Interview'}
-                    </button>
-                  </div>
-                </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div className="bg-white p-8 rounded-xl shadow-md text-center">
+                        <div className="flex justify-center mb-4">
+                          <div className="bg-blue-100 p-6 rounded-full">
+                            <MessageSquare className="text-blue-600" size={48} />
+                          </div>
+                        </div>
+                        <h3 className="text-xl font-bold mb-3 text-gray-800">Text Interview</h3>
+                        <p className="text-gray-600 mb-6">Answer questions by typing your responses</p>
+                        <button
+                          onClick={() => openInterviewWithResumeGate('text')}
+                          disabled={interviewStarting}
+                          className="bg-blue-500 hover:bg-blue-600 text-white px-8 py-3 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 mx-auto"
+                        >
+                          {interviewStarting ? (
+                            <>
+                              <div className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent"></div>
+                              Starting...
+                            </>
+                          ) : 'Start Text Interview'}
+                        </button>
+                      </div>
+
+                      <div className="bg-white p-8 rounded-xl shadow-md text-center">
+                        <div className="flex justify-center mb-4">
+                          <div className="bg-green-100 p-6 rounded-full">
+                            <Mic className="text-green-600" size={48} />
+                          </div>
+                        </div>
+                        <h3 className="text-xl font-bold mb-3 text-gray-800">Voice Interview</h3>
+                        <p className="text-gray-600 mb-6">Answer questions using your voice</p>
+                        <button
+                          onClick={() => openInterviewWithResumeGate('voice')}
+                          disabled={interviewStarting}
+                          className="bg-green-500 hover:bg-green-600 text-white px-8 py-3 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 mx-auto"
+                        >
+                          {interviewStarting ? (
+                            <>
+                              <div className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent"></div>
+                              Starting...
+                            </>
+                          ) : 'Start Voice Interview'}
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
             )}
 
@@ -1901,47 +2680,103 @@ const StudentPage = () => {
       {/* Chatbot Window */}
       <Chatbot isOpen={chatbotOpen} onClose={() => setChatbotOpen(false)} />
 
-      {/* Quiz Modal */}
+      {/* Quiz Modal - full-screen: the assessment occupies the whole
+          viewport instead of a narrow centered card (assessment UI overhaul).
+          Other modals keep their normal sizing. */}
       <Modal
         isOpen={quizModalOpen}
         onClose={closeQuizModal}
+        fullScreen={true}
         title={quizResults ? 'Quiz Results' : `${currentQuiz?.title || 'Quiz'}`}
       >
         {!quizResults ? (
           <div className="space-y-6">
+            {/* Server-authoritative countdown (display only) */}
+            {quizAttempt && quizAttempt.status === 'IN_PROGRESS' && (
+              <div className={`p-4 rounded-lg text-center ${quizTimeRemaining < 60 ? 'bg-red-50' : 'bg-blue-50'}`}>
+                <p className="text-sm font-medium text-gray-600 mb-1">Time Remaining</p>
+                <p className={`text-3xl font-bold ${quizTimeRemaining < 60 ? 'text-red-600 animate-pulse' : 'text-blue-600'}`}>
+                  {formatTime(quizTimeRemaining)}
+                </p>
+              </div>
+            )}
+
+            {/* Lock/result state: failed (tab switch / expiry) or already
+                submitted. NOT a dead end anymore - a Retake Assessment
+                button archives the old attempt and starts a clean one. */}
+            {quizLockMessage && (
+              <div className="bg-red-50 border-2 border-red-300 p-6 rounded-lg text-center">
+                <p className="text-2xl mb-2">🔒</p>
+                <p className="text-lg font-bold text-red-700">{quizLockMessage}</p>
+                <p className="text-sm text-gray-600 mt-2">
+                  You can retake this assessment - a fresh attempt will be started.
+                </p>
+                <div className="mt-4 flex flex-col sm:flex-row gap-3 justify-center">
+                  <button
+                    onClick={handleRetakeQuiz}
+                    disabled={quizRetaking}
+                    className="px-6 py-2 bg-purple-600 text-white rounded-lg font-medium hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {quizRetaking ? 'Preparing retake...' : '🔄 Retake Assessment'}
+                  </button>
+                  <button
+                    onClick={closeQuizModal}
+                    className="px-6 py-2 bg-gray-200 text-gray-700 rounded-lg font-medium hover:bg-gray-300"
+                  >
+                    Back
+                  </button>
+                </div>
+              </div>
+            )}
+
             <div className="bg-blue-50 p-4 rounded-lg">
               <p className="text-sm text-gray-700">
-                <span className="font-bold">Instructions:</span> Answer all questions to the best of your ability. 
-                Your quiz will be evaluated by AI once submitted.
+                <span className="font-bold">Instructions:</span> Answer all questions to the best of your ability.
+                Your quiz will be evaluated once submitted.
+              </p>
+              <p className="text-sm text-red-600 mt-2 font-medium">
+                ⚠️ Switching to another browser tab or window will automatically fail this assessment.
               </p>
               <p className="text-sm text-gray-600 mt-2">
-                Total Questions: {currentQuiz?.quiz_questions?.length || 0}
+                Total Questions: {quizQuestions.length}
               </p>
             </div>
 
             <div className="space-y-6 max-h-96 overflow-y-auto">
-              {currentQuiz?.quiz_questions?.map((question, index) => {
-                // Handle both string and object question formats
-                const questionText = typeof question === 'string' 
-                  ? question 
+              {quizQuestions.map((question, index) => {
+                // Normalize both legacy string questions and object questions
+                const questionText = typeof question === 'string'
+                  ? question
                   : question?.question || JSON.stringify(question);
                 const options = question?.options || [];
                 const hasOptions = Array.isArray(options) && options.length > 0;
-                
+                const category = question?.category;
+
                 return (
                   <div key={index} className="bg-white p-4 rounded-lg border border-gray-200">
-                    <h4 className="font-bold text-gray-800 mb-3">
-                      {index + 1}. {questionText}
-                    </h4>
+                    <div className="flex items-center justify-between gap-2 mb-3">
+                      <h4 className="font-bold text-gray-800">
+                        {index + 1}. {questionText}
+                      </h4>
+                      {/* Category tag (Grammar / General Knowledge / Technical /
+                          Logical Reasoning) when the bank provides one. */}
+                      {category && (
+                        <span className="shrink-0 px-2 py-1 text-xs rounded-full bg-indigo-100 text-indigo-700 font-medium">
+                          {category}
+                        </span>
+                      )}
+                    </div>
                     {hasOptions ? (
                       <div className="space-y-2">
                         {options.map((option, optIndex) => (
                           <label 
                             key={optIndex}
-                            className={`flex items-center p-3 rounded-lg border-2 cursor-pointer transition-all ${
-                              quizAnswers[index] === option
-                                ? 'border-purple-500 bg-purple-50'
-                                : 'border-gray-200 hover:border-purple-300 hover:bg-gray-50'
+                            className={`flex items-center p-3 rounded-lg border-2 transition-all ${
+                              quizLockMessage
+                                ? 'opacity-50 cursor-not-allowed border-gray-200'
+                                : quizAnswers[index] === option
+                                ? 'border-purple-500 bg-purple-50 cursor-pointer'
+                                : 'border-gray-200 hover:border-purple-300 hover:bg-gray-50 cursor-pointer'
                             }`}
                           >
                             <input
@@ -1950,6 +2785,7 @@ const StudentPage = () => {
                               value={option}
                               checked={quizAnswers[index] === option}
                               onChange={(e) => handleQuizAnswerChange(index, e.target.value)}
+                              disabled={!!quizLockMessage || quizSubmitting}
                               className="w-4 h-4 text-purple-600 focus:ring-purple-500"
                             />
                             <span className="ml-3 text-gray-700">{option}</span>
@@ -1962,7 +2798,8 @@ const StudentPage = () => {
                         onChange={(e) => handleQuizAnswerChange(index, e.target.value)}
                         placeholder="Type your answer here..."
                         rows="3"
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+                        disabled={!!quizLockMessage || quizSubmitting}
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:opacity-50"
                       />
                     )}
                   </div>
@@ -1973,7 +2810,7 @@ const StudentPage = () => {
             <div className="flex gap-3">
               <button
                 onClick={handleSubmitQuiz}
-                disabled={quizSubmitting}
+                disabled={quizSubmitting || !!quizLockMessage || !quizAttempt || quizAttempt.status !== 'IN_PROGRESS'}
                 className="flex-1 bg-purple-500 hover:bg-purple-600 text-white px-6 py-3 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {quizSubmitting ? 'Submitting...' : 'Submit Quiz'}
@@ -1991,9 +2828,16 @@ const StudentPage = () => {
           <div className="space-y-6">
             <div className="bg-gradient-to-r from-purple-50 to-blue-50 p-6 rounded-lg text-center">
               <p className="text-sm text-gray-600 mb-2">Your Score</p>
-              <p className="text-5xl font-bold text-purple-600 mb-2">
+              <p className={`text-5xl font-bold mb-2 ${
+                quizResults.passed === false ? 'text-red-600' : 'text-purple-600'
+              }`}>
                 {quizResults.score}%
               </p>
+              {quizResults.passed != null && (
+                <p className={`text-lg font-bold mb-2 ${quizResults.passed ? 'text-green-700' : 'text-red-700'}`}>
+                  {quizResults.passed ? '✓ PASSED' : '✗ FAILED'}
+                </p>
+              )}
               <p className="text-gray-700">{quizResults.overallFeedback}</p>
             </div>
 
@@ -2008,13 +2852,22 @@ const StudentPage = () => {
                   }`}>
                     <div className="flex justify-between items-start mb-2">
                       <p className="font-medium text-gray-800 flex-1">Q{index + 1}: {feedback.question}</p>
+                      {feedback.category && (
+                        <span className="ml-2 shrink-0 px-2 py-0.5 text-xs rounded-full bg-indigo-100 text-indigo-700 font-medium">
+                          {feedback.category}
+                        </span>
+                      )}
                       <span className={`ml-2 px-3 py-1 rounded-full text-sm font-bold flex items-center gap-1 ${
                         feedback.isCorrect 
-                          ? 'bg-green-200 text-green-800' 
+                          ? 'bg-green-200 text-green-800'
+                          : feedback.status === 'unanswered'
+                          ? 'bg-yellow-200 text-yellow-800'
                           : 'bg-red-200 text-red-800'
                       }`}>
                         {feedback.isCorrect ? (
                           <><Check size={16} /> Correct</>
+                        ) : feedback.status === 'unanswered' ? (
+                          <><AlertCircle size={16} /> Unanswered</>
                         ) : (
                           <><X size={16} /> Incorrect</>
                         )}
@@ -2031,9 +2884,6 @@ const StudentPage = () => {
                           <span className="font-medium">Correct answer:</span> {feedback.correctAnswer}
                         </p>
                       )}
-                      <p className="text-gray-700 mt-2">
-                        <span className="font-medium">Points earned:</span> {feedback.points}/{Math.floor(100 / quizResults.questionFeedback.length)}
-                      </p>
                     </div>
                   </div>
                 ))}
@@ -2178,14 +3028,77 @@ const StudentPage = () => {
         )}
       </Modal>
 
-      {/* Interview Modal */}
+      {/* MANDATORY "Upload Resume First" gate: rendered when the student
+          clicks Start Text/Voice Interview with no resume on file. Starting
+          the interview is impossible until the upload + parse succeeds. */}
+      <Modal
+        isOpen={interviewResumeGate}
+        onClose={() => { setInterviewResumeGate(false); setPendingInterviewMode(null); }}
+        title="Upload Resume First"
+      >
+        <div className="space-y-4">
+          <div className="flex items-center gap-3">
+            <div className="bg-amber-100 p-3 rounded-full">
+              <Upload size={26} className="text-amber-600" />
+            </div>
+            <div>
+              <p className="font-semibold text-gray-800">A resume is required before the AI Interview can start.</p>
+              <p className="text-sm text-gray-600">Your interview questions will be generated from your resume's actual projects, skills and experience.</p>
+            </div>
+          </div>
+          <ul className="text-sm text-gray-600 list-disc list-inside space-y-1 bg-gray-50 p-4 rounded-lg">
+            <li>Accepted formats: PDF or DOCX</li>
+            <li>The resume must parse successfully (text extraction) before the interview unlocks</li>
+            <li>You'll also get an ATS match score for your profile</li>
+          </ul>
+          <input
+            type="file"
+            ref={interviewResumeInputRef}
+            accept=".pdf,.docx"
+            className="w-full text-sm text-gray-600 file:mr-4 file:py-3 file:px-6 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-amber-100 file:text-amber-800 hover:file:bg-amber-200"
+          />
+          <div className="flex justify-end gap-3">
+            <button
+              onClick={() => { setInterviewResumeGate(false); setPendingInterviewMode(null); }}
+              disabled={interviewResumeUploading}
+              className="px-5 py-2.5 rounded-lg bg-gray-200 text-gray-700 hover:bg-gray-300 font-medium transition-colors disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => handleInterviewResumeUpload(true)}
+              disabled={interviewResumeUploading}
+              className="bg-amber-500 hover:bg-amber-600 text-white px-6 py-2.5 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            >
+              {interviewResumeUploading ? (
+                <>
+                  <div className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent"></div>
+                  Uploading &amp; Parsing...
+                </>
+              ) : 'Upload & Start Interview'}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Interview Modal - fullScreen: the assessment occupies the whole
+          viewport (other modals keep their normal card sizing) */}
       <Modal
         isOpen={interviewModalOpen}
         onClose={closeInterviewModal}
+        fullScreen={true}
         title={interviewResults ? 'Interview Results' : `Question ${currentQuestionIndex + 1} of ${interviewQuestions.length}`}
       >
         {!interviewResults ? (
           <div className="space-y-6">
+            {interviewResuming && (
+              <div className="bg-amber-50 border border-amber-300 p-3 rounded-lg text-center">
+                <p className="text-sm text-amber-800 font-medium">
+                  ↩️ Previous interview session restored — continuing from Question {currentQuestionIndex + 1}.
+                </p>
+              </div>
+            )}
+
             {/* Timer */}
             <div className="bg-gray-100 p-4 rounded-lg text-center">
               <p className="text-sm font-medium text-gray-600 mb-1">Time Remaining</p>
@@ -2266,6 +3179,14 @@ const StudentPage = () => {
               <p className="text-2xl font-bold text-green-600 mb-2">
                 Score: {interviewResults.score || 'N/A'}%
               </p>
+              {/* Pass/Fail straight from the backend evaluation result. */}
+              {interviewResults.status && (
+                <p className={`text-lg font-bold mb-2 ${
+                  interviewResults.status === 'PASS' ? 'text-green-700' : 'text-red-700'
+                }`}>
+                  {interviewResults.status === 'PASS' ? '✓ PASSED' : '✗ FAILED'}
+                </p>
+              )}
               <p className="text-gray-700">{interviewResults.feedback || 'Interview completed successfully!'}</p>
             </div>
 
@@ -2274,8 +3195,23 @@ const StudentPage = () => {
                 <h4 className="font-bold text-gray-800">Detailed Feedback:</h4>
                 {interviewResults.details.map((detail, index) => (
                   <div key={index} className="bg-gray-50 p-4 rounded-lg">
-                    <p className="font-medium text-gray-800">{detail.question}</p>
-                    <p className="text-sm text-gray-600 mt-2">{detail.feedback}</p>
+                    <div className="flex justify-between items-start gap-2">
+                      <p className="font-medium text-gray-800">{detail.question}</p>
+                      {detail.classification && (
+                        <span className={`px-2 py-0.5 text-xs rounded-full whitespace-nowrap ${
+                          detail.classification === 'RELEVANT'
+                            ? 'bg-green-100 text-green-800'
+                            : detail.classification === 'PARTIALLY_RELEVANT'
+                            ? 'bg-yellow-100 text-yellow-800'
+                            : 'bg-red-100 text-red-800'
+                        }`}>
+                          {detail.classification.replace('_', ' ')}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-sm text-gray-600 mt-2">
+                      {detail.relevance_reason || detail.feedback || ''}
+                    </p>
                   </div>
                 ))}
               </div>

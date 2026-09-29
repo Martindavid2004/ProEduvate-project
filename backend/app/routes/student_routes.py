@@ -8,7 +8,8 @@ from bson import ObjectId
 from werkzeug.utils import secure_filename
 from werkzeug.security import check_password_hash, generate_password_hash
 import os
-from ..services.ai_service import extract_text_from_pdf, get_ats_analysis
+from ..services.ai_service import extract_text_from_pdf, extract_resume_text, get_ats_analysis
+from ..services import assessment_state
 from ..services.lambda_service import execute_python_code_lambda
 
 student_bp = Blueprint('student_bp', __name__, url_prefix='/api/student')
@@ -18,8 +19,9 @@ quiz_submissions = {}
 student_notifications = []
 
 def allowed_file(filename):
-    # Allowed extensions for resume uploads
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in {'pdf'}
+    # Allowed extensions for resume uploads (matches the frontend
+    # accept=".pdf,.doc,.docx" in StudentPage.js)
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in {'pdf', 'docx'}
 
 def allowed_assignment_file(filename):
     # Broader allowed extensions for general assignment uploads
@@ -45,19 +47,19 @@ def get_student_assignments():
                 "dueDate": a.get("dueDate"),
                 "type": a.get("type", "manual"),
                 "createdBy": "admin",
-                "isNew": a.get('createdAt', '') > get_last_login_time()
+                "isNew": _is_new_assignment(a)
             })
         
         # Process teacher assignments
         for a in teacher_assignments:
             all_assignments.append({
                 "id": str(a["_id"]),
-                "title": a["title"],
-                "description": a["description"],
-                "dueDate": a["dueDate"],
+                "title": a.get("title", "Untitled"),
+                "description": a.get("description", ""),
+                "dueDate": a.get("dueDate"),
                 "type": a.get("type", "manual"),
                 "createdBy": "teacher",
-                "isNew": a.get('createdAt', '') > get_last_login_time()
+                "isNew": _is_new_assignment(a)
             })
         
         return jsonify(all_assignments), 200
@@ -84,25 +86,60 @@ def get_student_assignments_by_id(user_id):
                 "student_id": user_id
             })
             
+            # Quiz assessments: the authoritative attempt lives in the
+            # submissions collection with type 'quiz_assessment' (server-
+            # controlled lifecycle). Its final state (PASS/FAIL/FAILED) must
+            # surface on the assignment card, otherwise a completed quiz
+            # shows "pending" forever and the result is unreachable.
+            quiz_attempt = None
+            quiz_status = None
+            if a.get("type") == "Quiz":
+                quiz_attempt = submissions_collection.find_one(
+                    {"quiz_assessment_key": f"{assignment_id}_{user_id}",
+                     "status": {"$in": list(assessment_state.FINAL_STATUSES)}},
+                    sort=[("submitted_at", -1)])
+                if quiz_attempt:
+                    quiz_status = quiz_attempt.get("status")
+
+            has_submission = submission is not None or quiz_attempt is not None
+
             assignment_data = {
                 "id": assignment_id,
-                "title": a["title"],
-                "description": a["description"],
-                "dueDate": a["dueDate"],
+                "title": a.get("title", "Untitled"),
+                "description": a.get("description", ""),
+                "dueDate": a.get("dueDate"),
                 "type": a.get("type", "manual"),
                 "createdBy": "teacher",
-                "submitted": submission is not None,
+                "submitted": has_submission,
                 "submittedAt": submission.get("submitted_at").isoformat() if submission and submission.get("submitted_at") else None,
-                "status": "submitted" if submission else "pending"
+                "status": "submitted" if has_submission else "pending"
             }
-            
+
             # Add quiz-specific data
             if a.get("type") == "Quiz" and a.get("quizQuestions"):
                 assignment_data["quiz_questions"] = a["quizQuestions"]
-            
-            # Add quiz score if submitted
-            if submission and submission.get("quiz_score"):
-                assignment_data["quiz_score"] = submission["quiz_score"]
+
+            # Quiz result data (score + pass/fail + full evaluation for the
+            # answer-review view). Score 0 from a proctoring failure still
+            # surfaces (score >= 0, not truthiness).
+            if quiz_attempt is not None:
+                score = quiz_attempt.get("score")
+                if score is not None:
+                    assignment_data["quiz_score"] = score
+                    assignment_data["quiz_passed"] = bool(quiz_attempt.get("passed"))
+                    assignment_data["quiz_status"] = quiz_status
+                    assignment_data["quiz_failure_reason"] = quiz_attempt.get("failure_reason")
+                    evaluation = quiz_attempt.get("evaluation")
+                    if evaluation:
+                        assignment_data["quiz_evaluation"] = {
+                            "total_questions": evaluation.get("total_questions"),
+                            "correct_answers": evaluation.get("correct_answers"),
+                            "incorrect_answers": evaluation.get("incorrect_answers"),
+                            "unanswered": evaluation.get("unanswered"),
+                            "score": evaluation.get("score"),
+                            "passed": evaluation.get("passed"),
+                            "results": evaluation.get("results") or [],
+                        }
             
             all_assignments.append(assignment_data)
         
@@ -147,6 +184,23 @@ def get_student_progress(user_id):
         if quiz_submissions:
             avg_quiz_score = sum(sub.get("quiz_score", 0) for sub in quiz_submissions) / len(quiz_submissions)
         
+        # APTITUDE/ASSESSMENT SCORE SYNC (profile "Quiz Average" card):
+        # the training-section MCQ attempts live in the same submissions
+        # collection (type 'aptitude') with a computed score. Include them
+        # so the dashboard reflects completed tests immediately instead of
+        # showing a fallback N/A. Failed (tab-switch/expiry) attempts store
+        # score 0 by contract and count toward the average too - they were
+        # real attempts.
+        aptitude_submissions = list(submissions_collection.find({
+            "student_id": user_id,
+            "type": "aptitude",
+            "score": {"$ne": None},
+        }))
+        all_scored = [s.get("quiz_score", 0) for s in quiz_submissions] + \
+                     [s.get("score", 0) for s in aptitude_submissions]
+        combined_avg = (sum(all_scored) / len(all_scored)) if all_scored else 0
+        total_assessments = len(quiz_submissions) + len(aptitude_submissions)
+        
         progress = {
             "totalAssignments": total_assignments,
             "completedAssignments": completed_assignments,
@@ -154,17 +208,40 @@ def get_student_progress(user_id):
             "completionRate": (completed_assignments / total_assignments * 100) if total_assignments > 0 else 0,
             "averageScore": student.get("average_score", 0),
             "attendanceRate": student.get("attendance", 95),
-            "resumeScore": student.get("resumeScore", 80),
-            "interviewScore": student.get("interviewScore", 85),
-            "quizScore": avg_quiz_score if avg_quiz_score > 0 else student.get("quizScore", 90),
-            "averageQuizScore": avg_quiz_score if avg_quiz_score > 0 else student.get("averageQuizScore", 90),
-            "totalQuizzes": len(quiz_submissions),
+            "resumeScore": student.get("resumeScore"),
+            # True once the student uploaded a resume (gatekeeper state for
+            # the AI Interview). No default 80/True: the dashboard must show
+            # the REAL state, not a fabricated value.
+            "resumeUploaded": bool(student.get("resume_text") or student.get("resume_filename")),
+            # NO default interview score: an un-interviewed student must show
+            # N/A in the UI, not a fabricated 85%. The real score is written
+            # by /api/interview/evaluate after an evidence-based evaluation.
+            "interviewScore": student.get("interviewScore"),
+            # PASS/FAIL recorded by /api/interview/evaluate. None when the
+            # student has not completed an interview yet (UI shows no badge).
+            "interviewStatus": student.get("interviewStatus"),
+            # Combined quiz + aptitude-test average (real-time from the
+            # submissions collection - never a hardcoded fallback).
+            "quizScore": combined_avg if combined_avg > 0 else None,
+            "averageQuizScore": combined_avg if combined_avg > 0 else None,
+            "totalQuizzes": total_assessments,
+            # Training-section aptitude test stats (profile dashboard sync).
+            "aptitudeScore": (sum(s.get("score", 0) for s in aptitude_submissions) / len(aptitude_submissions)) if aptitude_submissions else None,
+            "totalAptitudeTests": len(aptitude_submissions),
+            "aptitudeBestScore": max((s.get("score", 0) for s in aptitude_submissions), default=None),
             "recentActivity": [
                 {"date": "2024-12-14", "activity": "Submitted assignment"},
                 {"date": "2024-12-13", "activity": "Completed quiz"}
             ]
         }
-        
+
+        # Read fresh from the DB in the same request: the dashboard must show
+        # the LATEST persisted result, never a stale cached value.
+        if progress.get("interviewScore") is not None:
+            print(f"[DASHBOARD] Interview result fetched: "
+                  f"user_id={user_id} score={progress['interviewScore']} "
+                  f"status={progress.get('interviewStatus')}")
+
         return jsonify(progress), 200
     except Exception as e:
         print(f"Error fetching student progress: {e}")
@@ -183,9 +260,9 @@ def upload_resume(user_id):
     save_path = os.path.join(current_app.config['UPLOAD_FOLDER'], filename)
     file.save(save_path)
 
-    resume_text = extract_text_from_pdf(save_path)
+    resume_text = extract_resume_text(save_path)
     if not resume_text:
-        return jsonify({"error": "Could not read text from PDF"}), 500
+        return jsonify({"error": "Could not read text from the resume (supported formats: PDF, DOCX)"}), 500
 
     job_description = """
     Job Title: Junior Fullstack Java Developer
@@ -220,6 +297,11 @@ def upload_resume(user_id):
             {"_id": ObjectId(user_id)},
             {"$set": { 
                 "resume_filename": filename, 
+                # Store the extracted resume text so the Mock Interview
+                # question generator can reuse it (no second extraction
+                # pipeline, no re-parsing the file on every interview start).
+                "resume_text": resume_text,
+                "resume_text_updated_at": datetime.utcnow(),
                 "atsScore": resume_score,
                 "resumeScore": resume_score,
                 "matchingSkills": matching_keywords,
@@ -232,6 +314,8 @@ def upload_resume(user_id):
             {"role": "student"},
             {"$set": { 
                 "resume_filename": filename, 
+                "resume_text": resume_text,
+                "resume_text_updated_at": datetime.utcnow(),
                 "atsScore": resume_score,
                 "resumeScore": resume_score,
                 "matchingSkills": matching_keywords,
@@ -382,6 +466,23 @@ def get_notifications():
 def get_last_login_time():
     """Mock function to get last login time"""
     return "2024-01-01T00:00:00"
+
+def _is_new_assignment(assignment):
+    """Type-safe isNew check.
+
+    createdAt may be missing, a string, or a real Mongo datetime. Comparing a
+    datetime against the string returned by get_last_login_time() raises
+    TypeError ('>' not supported between datetime and str), which used to 500
+    the whole assignments list.
+    """
+    created = assignment.get('createdAt')
+    if not created:
+        return False
+    try:
+        return created > get_last_login_time()
+    except TypeError:
+        # Mixed types: fall back to a string comparison of both sides.
+        return str(created) > str(get_last_login_time())
 
 @student_bp.route('/<student_id>/submissions', methods=['GET'])
 def get_student_submissions(student_id):

@@ -49,3 +49,11 @@ uploads/
 # OS
 .DS_Store
 Thumbs.db
+
+# --- Canary isolated test env (local only) ---
+.venv-canary/
+.nemo-src/
+.uv-cache/
+.uv-cache2/
+longpaths.gitconfig
+canary_test_report.txt

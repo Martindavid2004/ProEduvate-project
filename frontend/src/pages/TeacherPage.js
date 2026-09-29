@@ -15,6 +15,10 @@ const TeacherPage = () => {
   const [assignmentTitle, setAssignmentTitle] = useState('');
   const [assignmentDesc, setAssignmentDesc] = useState('');
   const [assignmentType, setAssignmentType] = useState('Assignment');
+  // Question-bank categories for AI-generated quizzes (Grammar, General
+  // Knowledge, Technical, Logical Reasoning). Empty selection = mixed.
+  const QUIZ_CATEGORIES = ['Grammar', 'General Knowledge', 'Technical', 'Logical Reasoning'];
+  const [quizCategories, setQuizCategories] = useState([]); // [] = all categories mixed
   const [myAssignments, setMyAssignments] = useState([]);
   
   // Admin tasks
@@ -80,22 +84,24 @@ const TeacherPage = () => {
     if (!assignmentTitle.trim() || !assignmentDesc.trim()) {
       alert('Please fill all fields.');
       return;
-    }
-
-    try {
-      let quizQuestions = null;
-      
-      // If assignment type is Quiz, generate quiz questions using AI
-      if (assignmentType === 'Quiz') {
-        try {
-          const quizResponse = await chatbotAPI.generateQuiz(assignmentTitle, 10);
-          quizQuestions = quizResponse.data.questions || quizResponse.data;
-        } catch (quizError) {
-          console.error('Error generating quiz:', quizError);
-          alert('Failed to generate quiz questions. Please try again.');
-          return;
-        }
-      }
+    }      try {
+          let quizQuestions = null;
+          
+          // If assignment type is Quiz, build the question bank from the
+          // seeded local question bank (NO AI needed: vetted static pool of
+          // GK / Grammar / Technical / Logical Reasoning questions, randomly
+          // selected per generation). Students still get a fresh randomized
+          // 10-question paper on every attempt via backend dynamic pooling.
+          if (assignmentType === 'Quiz') {
+            try {
+              const quizResponse = await chatbotAPI.generateQuiz(assignmentTitle, 10, quizCategories, 'bank');
+              quizQuestions = quizResponse.data.questions || quizResponse.data;
+            } catch (quizError) {
+              console.error('Error generating quiz:', quizError);
+              alert('Failed to build the quiz question bank. Please try again.');
+              return;
+            }
+          }
 
       await teacherAPI.createAssignment({
         title: assignmentTitle,
@@ -106,8 +112,9 @@ const TeacherPage = () => {
       setAssignmentTitle('');
       setAssignmentDesc('');
       setAssignmentType('Assignment');
+      setQuizCategories([]);
       alert(assignmentType === 'Quiz' 
-        ? 'Quiz created successfully with 10 AI-generated questions!' 
+        ? 'Quiz created successfully with 10 questions from the seeded question bank!' 
         : 'Assignment created successfully!');
       await loadTeacherAssignments();
     } catch (error) {
@@ -286,6 +293,41 @@ const TeacherPage = () => {
                         <option value="Other">Other</option>
                       </select>
                     </div>
+
+                    {/* Question-bank categories (Quiz type only): the AI paper
+                        is drawn from / tagged with these categories. */}
+                    {assignmentType === 'Quiz' && (
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Question Categories
+                          <span className="ml-2 text-xs font-normal text-gray-500">(none selected = mixed)</span>
+                        </label>
+                        <div className="grid grid-cols-2 gap-2">
+                          {QUIZ_CATEGORIES.map(cat => (
+                            <label
+                              key={cat}
+                              className={`flex items-center gap-2 p-3 rounded-lg border-2 cursor-pointer transition-all ${
+                                quizCategories.includes(cat)
+                                  ? 'border-blue-500 bg-blue-50'
+                                  : 'border-gray-200 hover:border-blue-300'
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={quizCategories.includes(cat)}
+                                onChange={(e) => {
+                                  setQuizCategories(prev =>
+                                    e.target.checked ? [...prev, cat] : prev.filter(c => c !== cat)
+                                  );
+                                }}
+                                className="w-4 h-4 text-blue-600 focus:ring-blue-500"
+                              />
+                              <span className="text-sm text-gray-700">{cat}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                     
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-2">Description</label>

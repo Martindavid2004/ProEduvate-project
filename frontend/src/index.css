@@ -1,3 +1,7 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
@@ -83,6 +87,54 @@ code {
   position: relative;
 }
 
+/* Full-screen variant used ONLY by the Mock Interview modal: it occupies the
+   whole viewport instead of a 600px card. Other modals are unaffected. */
+.interview-modal-fullscreen {
+  padding: 0;
+}
+
+.interview-modal-fullscreen .interview-modal-content {
+  max-width: 100vw;
+  width: 100vw;
+  max-height: 100vh;
+  height: 100vh;
+  border-radius: 0;
+}
+
+.interview-modal-fullscreen .interview-modal-body {
+  /* Required vertical scrolling only; never horizontal. */
+  overflow-y: auto;
+  overflow-x: hidden;
+  height: calc(100vh - 65px); /* viewport minus the sticky header */
+}
+
+/* Full-viewport surface for the active aptitude assessment (AptitudeTraining
+   test view). It escapes the dashboard content column to cover the entire
+   browser viewport; vertical scrolling only, never horizontal. */
+.assessment-fullscreen {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  background: #f3f4f6;
+  z-index: 1040;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 16px;
+}
+
+.assessment-fullscreen > * {
+  max-width: 1100px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+@media (max-width: 768px) {
+  .assessment-fullscreen {
+    padding: 10px;
+  }
+}
+
 .sidebar {
   transition: width 0.3s ease-in-out, transform 0.3s ease-in-out;
 }
@@ -158,6 +210,21 @@ code {
   .interview-modal-content {
     max-width: 100%;
     max-height: 95vh;
+  }
+
+  .interview-modal-fullscreen {
+    padding: 0;
+  }
+
+  .interview-modal-fullscreen .interview-modal-content {
+    max-width: 100vw;
+    width: 100vw;
+    max-height: 100vh;
+    height: 100vh;
+  }
+
+  .interview-modal-fullscreen .interview-modal-body {
+    height: calc(100vh - 65px);
   }
 
   .page-content > div {

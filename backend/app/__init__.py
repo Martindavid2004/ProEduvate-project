@@ -50,6 +50,15 @@ def create_app():
     app.register_blueprint(aptitude_bp)
     app.register_blueprint(gd_bp)
 
+    # Unique per-attempt indexes: make assessment start race-proof so a
+    # double start / two tabs / refresh can never create two attempts for
+    # the same assessment+student pair (BUG 5/6/9). Idempotent.
+    from .services.assessment_state import ensure_attempt_indexes
+    try:
+        ensure_attempt_indexes()
+    except Exception as e:
+        print(f"Warning: could not create assessment attempt indexes: {e}")
+
     @app.route('/resumes/<filename>')
     def uploaded_file(filename):
         return send_from_directory(app.config['UPLOAD_FOLDER'], filename)

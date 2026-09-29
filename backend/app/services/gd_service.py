@@ -42,13 +42,112 @@ class GDService:
             except Exception as e:
                 print(f"Error configuring Gemini API: {e}")
 
-    def generate_ai_agent_response(self, topic, context, agent_personality, agent_gender, latest_user_text=""):
+    def check_topic_relevance(self, topic, transcript, recent_context=""):
+        """Dedicated semantic topic-relevance check for a participant statement.
+
+        This is the single authoritative relevance step: it runs BEFORE any
+        normal agent response is generated. It uses the LLM for meaning-based
+        judgement when a provider is configured and falls back to the
+        deterministic heuristic gate otherwise. It is NOT keyword matching:
+        a statement can be relevant without containing any topic keyword, and
+        a statement containing a topic keyword can still be irrelevant.
+
+        Returns structured output:
+            {
+                "is_relevant": bool,
+                "confidence": float 0-1,
+                "reason": str,
+                "method": 'llm' | 'heuristic'
+            }
+        """
+        result = {"is_relevant": True, "confidence": 0.0, "reason": "", "method": "heuristic"}
+        text = (transcript or "").strip()
+        if not text:
+            result.update(is_relevant=False, confidence=1.0,
+                          reason="Empty statement - nothing to evaluate.")
+            return result
+
+        context_section = f"""Recent discussion context:
+{(recent_context or '')[:800]}
+
+""" if recent_context else ""
+
+        prompt = f"""Decide whether the participant's statement is genuinely RELATED to the group discussion topic.
+
+Topic:
+"{topic}"
+
+{context_section}Participant statement:
+"{text}"
+
+Judge by MEANING, not by keyword matching:
+- A statement can be RELEVANT without containing any topic keyword.
+  Example: topic "Impact of AI on Employment", statement "Reskilling workers
+  is necessary because automation can change job requirements" -> RELATED.
+- A statement containing a topic keyword can still be UNRELATED.
+  Example: topic "Impact of AI on Employment", statement "Yesterday I watched
+  a movie with my friends" -> UNRELATED.
+- Gibberish, filler or disconnected chatter is UNRELATED.
+
+Respond with ONLY a valid JSON object:
+{{"is_relevant": true or false, "confidence": 0.0-1.0, "reason": "one short sentence"}}"""
+        system_prompt = "You are an impartial discussion moderator. Respond only with a valid JSON object."
+
+        try:
+            parsed = self._call_llm_with_fallback(
+                prompt, system_prompt, max_tokens=120, temperature=0.0,
+                json_mode=True, valid_keys=["is_relevant"]
+            )
+        except Exception as e:
+            print(f"[RELEVANCE] LLM relevance check failed, falling back to heuristic: {e}")
+            parsed = None
+
+        if isinstance(parsed, dict) and "is_relevant" in parsed:
+            try:
+                conf = float(parsed.get("confidence", 0.0))
+            except (TypeError, ValueError):
+                conf = 0.0
+            result.update(
+                is_relevant=bool(parsed.get("is_relevant")),
+                confidence=max(0.0, min(1.0, conf)),
+                reason=str(parsed.get("reason", ""))[:200],
+                method="llm",
+            )
+        else:
+            related, ratio = self._judge_topic_relevance(text, topic)
+            result.update(
+                is_relevant=bool(related),
+                confidence=round(float(ratio), 2),
+                reason=("Statement contains genuine topic substance." if related
+                        else "Statement does not address the GD topic."),
+                method="heuristic",
+            )
+
+        print(f"[RELEVANCE] method={result['method']} is_relevant={result['is_relevant']} "
+              f"confidence={result['confidence']} statement={text[:80]!r}")
+        return result
+
+    def generate_ai_agent_response(self, topic, context, agent_personality, agent_gender,
+                                   latest_user_text="", respond_to_name=None,
+                                   respond_to_type="user", respond_to_text="", agent_name=None,
+                                   relevance=None):
         """
         Generate AI agent response for GD.
 
-        The agent MUST react to the latest user utterance (latest_user_text).
-        If the utterance is NOT related to the topic, the agent says so plainly
-        instead of forcing an indirect connection to the topic.
+        Speaker-aware behaviour: the agent responds to the PREVIOUS speaker,
+        who may be another AI agent (respond_to_type='agent') or the human
+        participant (respond_to_type='user'). It must NOT always address the
+        user.
+
+        For USER-directed turns, the latest user utterance (latest_user_text)
+        is first checked for topic relevance via check_topic_relevance(). If
+        it is NOT related to the topic, the agent says so plainly instead of
+        forcing an indirect connection to the topic.
+
+        For AGENT-directed turns, the agent responds to respond_to_name's
+        point (respond_to_text), grounded in the actual discussion context -
+        never inventing statements.
+
         When no LLM provider is available we return an explicit error marker
         instead of a random canned response - the caller surfaces a clear
         'AI unavailable' message rather than speaking something unrelated.
@@ -64,13 +163,45 @@ class GDService:
 
             personality = personality_prompts.get(agent_personality, personality_prompts['analytical'])
 
-            # Clean and truncate the user's latest utterance so the prompt always
+            # Clean and truncate the latest utterances so the prompt always
             # reflects what was actually just said (transcription artifacts trimmed).
             latest_user_text = (latest_user_text or '').strip()
             if len(latest_user_text) > 500:
                 latest_user_text = latest_user_text[:500] + '...'
+            respond_to_text = (respond_to_text or '').strip()
+            if len(respond_to_text) > 500:
+                respond_to_text = respond_to_text[:500] + '...'
 
-            if latest_user_text:
+            # ---- Dedicated topic-relevance gate (semantic, not keyword-only) ----
+            # Every USER statement is checked for topic relevance BEFORE a
+            # normal response is generated. Agent-to-agent turns skip this:
+            # agent statements are generated from the topic context itself,
+            # so there is no new user statement to validate.
+            if respond_to_type != 'agent' and latest_user_text:
+                if relevance is None:
+                    relevance = self.check_topic_relevance(topic, latest_user_text, context)
+                if not relevance.get("is_relevant", True):
+                    print(f"[RELEVANCE] UNRELATED (method={relevance.get('method')}, "
+                          f"confidence={relevance.get('confidence')}) -> off-topic intervention, "
+                          f"no normal agent response generated")
+                    return self.OFF_TOPIC_REPLY
+
+            if respond_to_type == 'agent' and respond_to_name and respond_to_text:
+                # Agent-to-agent turn: respond to the previous AGENT's point so
+                # the discussion flows between speakers, not always to the user.
+                user_section = f"""The previous speaker, {respond_to_name}, JUST said (respond to THEM, not to the participant):
+"{respond_to_text}"
+"""
+                instruction = f"""You are {agent_name or 'a participant'} in this group discussion.
+1. Respond directly to {respond_to_name}'s latest point: agree, disagree
+   partially, ask a question, or build on it
+2. Ground every claim in the ACTUAL statements visible in the context below -
+   never invent or quote statements that were not made
+3. Vary your move: agree / disagree / clarify / give an example / challenge /
+   extend the argument (do not always agree)
+4. This is a discussion between participants - do not simply address the user
+5. Stay on the topic "{topic}" and be professional"""
+            elif latest_user_text:
                 user_section = f"""The participant JUST said (respond directly to this):
 "{latest_user_text}"
 """
@@ -111,7 +242,7 @@ Recent discussion context:
 
 Your response:"""
 
-            system_prompt = "You are a professional participant in a group discussion. Always respond to the most recent speaker's point. If the most recent statement is unrelated to the topic, say that it is not related to the topic and ask the speaker to share points related to the topic - never connect an unrelated statement to the topic. Respond only in English."
+            system_prompt = "You are a professional participant in a group discussion. Always respond to the most recent speaker's point - whether that speaker is another AI participant or the human participant. If the most recent user statement is unrelated to the topic, say that it is not related to the topic and ask the speaker to share points related to the topic - never connect an unrelated statement to the topic. Never invent statements that were not made. Respond only in English."
 
             # [AI_CONTEXT] debug trail: makes it verifiable whether an unrelated
             # response is an STT problem (wrong transcript in) or a prompting
@@ -119,7 +250,8 @@ Your response:"""
             print(f"[AI_CONTEXT] CURRENT_USER_TRANSCRIPT: {latest_user_text!r}")
             print(f"[AI_CONTEXT] AI_PROMPT_USER_INPUT: {latest_user_text!r} "
                   f"(topic={topic!r}, personality={agent_personality!r}, "
-                  f"context_len={len(context or '')})")
+                  f"context_len={len(context or '')}, respond_to={respond_to_type!r}, "
+                  f"respond_to_name={respond_to_name!r}, agent_name={agent_name!r})")
 
             result = self._call_llm_with_fallback(prompt, system_prompt, max_tokens=100, temperature=0.7)
             if result:

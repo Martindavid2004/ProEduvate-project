@@ -21,9 +21,37 @@ def seed_db_questions():
     except Exception as e:
         print(f"Warning seeding question banks to DB: {e}")
 
-def generate_aptitude_questions(topic, difficulty="medium", num_questions=50):
-    """Fetches aptitude test questions from DB (No Gemini AI call)."""
-    print(f"[DEBUG] generate_aptitude_questions called for topic: '{topic}'")
+# Normal test length: 10-15 questions per attempt (REVERTED from the old 50).
+# Used as the default everywhere a count is not explicitly supplied.
+DEFAULT_TEST_QUESTIONS = 15
+MAX_TEST_QUESTIONS = 15
+
+
+def _clamp_test_length(num_questions):
+    """Normalize a requested question count to the NORMAL test length.
+
+    None/invalid -> default (15). Any value above the 15-question cap is
+    clamped down, so the old 50-question length can never come back through
+    any caller. A caller may still ask for fewer (e.g. 10) for a short test.
+    """
+    try:
+        n = int(num_questions)
+    except (TypeError, ValueError):
+        return DEFAULT_TEST_QUESTIONS
+    return max(1, min(n, MAX_TEST_QUESTIONS))
+
+
+def generate_aptitude_questions(topic, difficulty="medium", num_questions=None):
+    """Build the test question pool for a topic.
+
+    Sources, in order: the topic's curated DB bank, then AI-generated
+    questions (Gemini via get_ai_response) to EXPAND the pool dynamically so
+    retakes are not identical repeats. The final list is shuffled, de-duplicated
+    and capped at the normal test length (15 questions). Falls back to the
+    curated bank alone when the AI is unavailable - tests never break.
+    """
+    num_questions = _clamp_test_length(num_questions)
+    print(f"[DEBUG] generate_aptitude_questions called for topic: '{topic}' (count={num_questions})")
     matched_topic = None
     for key in APTITUDE_TOPICS.keys():
         if key.lower() == topic.lower():
@@ -40,18 +68,115 @@ def generate_aptitude_questions(topic, difficulty="medium", num_questions=50):
     try:
         doc = aptitude_test_questions_collection.find_one({"topic": matched_topic})
         if doc and "questions" in doc:
-            questions = doc["questions"]
+            questions = list(doc["questions"])
     except Exception as e:
         print(f"DB lookup warning for test questions: {e}")
 
     if not questions and matched_topic in PREDEFINED_TEST_QUESTIONS:
-        questions = PREDEFINED_TEST_QUESTIONS[matched_topic]
+        questions = list(PREDEFINED_TEST_QUESTIONS[matched_topic])
+
+    # NORMAL LENGTH CAP: a finished pool is trimmed to the normal test length
+    # (15) so legacy 50-question DB banks can never produce an oversized paper.
+    questions = questions[:num_questions]
+
+    # FALLBACK-SWAP GUARD: the old code substituted a different topic's bank
+    # ("Number System") when a topic had no questions - that is where the
+    # "What is 2+2"-style off-topic trivial questions came from. Never show
+    # another topic's questions; keep the pool empty instead so the AI
+    # expansion below still runs.
+
+    if questions:
+        questions = _dedupe_questions(questions)
+
+    # Dynamic expansion: top up toward the requested size with freshly
+    # generated, on-topic questions (bounded effort - never blocks the
+    # request if the AI is slow/unavailable).
+    if len(questions) < num_questions:
+        needed = num_questions - len(questions)
+        generated = _generate_ai_questions(matched_topic, difficulty, needed)
+        if generated:
+            questions.extend(generated)
+            questions = _dedupe_questions(questions)
+            print(f"[EXPAND] pool expanded with {len(generated)} AI questions "
+                  f"for '{matched_topic}' (total {len(questions)})")
 
     if not questions:
-        questions = PREDEFINED_TEST_QUESTIONS.get("Number System", [])
+        # Last resort ONLY when the topic truly has no curated bank and AI
+        # failed: an empty pool with a clear log (the caller 404s).
+        print(f"[WARN] no questions available for topic '{matched_topic}'")
 
-    print(f"[SUCCESS] Retrieved {len(questions)} test questions from DB for '{matched_topic}'")
+    # Shuffle so two attempts never see the same order/selection.
+    random.shuffle(questions)
+
+    print(f"[SUCCESS] Returning {len(questions)} test questions for '{matched_topic}'")
     return {"questions": questions}
+
+
+def _dedupe_questions(questions):
+    """Remove duplicate questions (by normalized question text)."""
+    seen = set()
+    unique = []
+    for q in questions:
+        text = (q.get("question") or "").strip().lower() if isinstance(q, dict) else str(q).strip().lower()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        unique.append(q)
+    return unique
+
+
+def _generate_ai_questions(topic, difficulty, count):
+    """Ask the LLM for `count` fresh on-topic questions. Returns [] on any
+    failure - the curated bank is always the floor."""
+    try:
+        count = max(1, min(int(count), MAX_TEST_QUESTIONS))
+    except (TypeError, ValueError):
+        return []
+    prompt = f"""
+    You are an aptitude exam setter for placement training.
+    Generate exactly {count} multiple-choice aptitude questions on the topic "{topic}"
+    at {difficulty} difficulty.
+
+    Rules:
+    - Each question must be quantitative/logical and specific to "{topic}".
+    - NEVER produce trivial questions (e.g. "What is 2+2?"). Every question
+      must require actual reasoning or calculation.
+    - Do NOT repeat well-known textbook examples verbatim.
+
+    IMPORTANT: Your entire response must be a single, raw JSON object and nothing else.
+    The JSON object must have a single key "questions".
+    Each question object must have these exact keys:
+    - "question": string
+    - "options": list of exactly 4 strings
+    - "correct_answer": string that exactly matches one of the options
+    - "explanation": short step-by-step solution string
+    - "difficulty": "{difficulty}"
+    """
+    try:
+        ai_response = get_ai_response(prompt)
+    except Exception as e:
+        print(f"[EXPAND] AI question generation failed: {e}")
+        return []
+    if not ai_response or not isinstance(ai_response, dict):
+        return []
+    raw = ai_response.get("questions") or []
+    valid = []
+    for q in raw:
+        if (isinstance(q, dict)
+                and q.get("question")
+                and isinstance(q.get("options"), list)
+                and len(q["options"]) >= 2
+                and q.get("correct_answer") in q["options"]):
+            valid.append({
+                "question": q["question"],
+                "options": q["options"][:4],
+                "correct_answer": q["correct_answer"],
+                "explanation": q.get("explanation", ""),
+                "difficulty": q.get("difficulty", difficulty),
+                "generated_by": "ai",
+            })
+    print(f"[EXPAND] AI returned {len(valid)}/{count} valid questions for '{topic}'")
+    return valid
 
 def generate_practice_questions(topic, num_questions=10):
     """Fetches practice questions with detailed solutions from DB (No Gemini AI call)."""
@@ -77,10 +202,14 @@ def generate_practice_questions(topic, num_questions=10):
         print(f"DB lookup warning for practice questions: {e}")
 
     if not practice_questions and matched_topic in PREDEFINED_PRACTICE_QUESTIONS:
-        practice_questions = PREDEFINED_PRACTICE_QUESTIONS[matched_topic]
+        practice_questions = list(PREDEFINED_PRACTICE_QUESTIONS[matched_topic])
 
-    if not practice_questions:
-        practice_questions = PREDEFINED_PRACTICE_QUESTIONS.get("Number System", [])
+    # Same fallback-swap guard as tests: never substitute another topic's
+    # practice bank (source of off-topic trivial questions).
+    if practice_questions:
+        practice_questions = _dedupe_questions(practice_questions)
+        random.shuffle(practice_questions)
+        practice_questions = practice_questions[:max(1, min(int(num_questions or 10), len(practice_questions)))]
 
     print(f"[SUCCESS] Retrieved {len(practice_questions)} practice questions from DB for '{matched_topic}'")
     return {"practice_questions": practice_questions}

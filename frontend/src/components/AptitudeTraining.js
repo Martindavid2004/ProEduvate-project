@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Brain, BookOpen, Target, Trophy, Clock, Camera, AlertCircle, CheckCircle, XCircle, Video } from 'lucide-react';
-import { API_URL } from '../services/api';
+import { Brain, BookOpen, Target, Trophy, Clock, Camera, AlertCircle, CheckCircle, XCircle, Video, RotateCcw } from 'lucide-react';
+import { API_URL, assessmentAPI } from '../services/api';
+
+// Normal test length (REVERTED from 50): tests are 10-15 questions.
+const TEST_QUESTION_COUNT = 15;
 
 const AptitudeTraining = ({ currentStudent }) => {
   const [selectedTopic, setSelectedTopic] = useState(null);
@@ -12,13 +15,18 @@ const AptitudeTraining = ({ currentStudent }) => {
   const [testId, setTestId] = useState(null);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [userAnswers, setUserAnswers] = useState({});
-  const [timeRemaining, setTimeRemaining] = useState(3600); // 60 minutes in seconds
+  const [timeRemaining, setTimeRemaining] = useState(3600); // display only (from server expiry)
   const [testStarted, setTestStarted] = useState(false);
   const [cameraEnabled, setCameraEnabled] = useState(false);
   const [testResults, setTestResults] = useState(null);
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(null);
-  
+  const [testAttempt, setTestAttempt] = useState(null); // server-side attempt (expiry authority)
+  const [testLockMessage, setTestLockMessage] = useState(null);
+  const [topicAttempt, setTopicAttempt] = useState(null); // last attempt state for the selected topic
+  const testFinalizedRef = useRef(false); // guards duplicate fail/submit calls
+  const testStartedRef = useRef(false);
+
   const videoRef = useRef(null);
   const timerIntervalRef = useRef(null);
 
@@ -29,23 +37,84 @@ const AptitudeTraining = ({ currentStudent }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Timer for test
-  useEffect(() => {
-    if (testStarted && timeRemaining > 0) {
-      timerIntervalRef.current = setInterval(() => {
-        setTimeRemaining(prev => {
-          if (prev <= 1) {
-            clearInterval(timerIntervalRef.current);
-            handleSubmitTest();
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
+  // Server-authoritative finalization (tab switch / timer expiry).
+  const finalizeTestFailure = async (reason) => {
+    if (testFinalizedRef.current || !testId) return;
+    testFinalizedRef.current = true;
+    clearInterval(timerIntervalRef.current);
+    setTestStarted(false);
+    testStartedRef.current = false;
+    try {
+      const response = await assessmentAPI.failAptitude(testId, reason, {
+        student_id: currentStudent.id,
+        topic: selectedTopic?.name,
+      });
+      const attempt = response.data?.attempt;
+      setTestAttempt(attempt || null);
+      setTestLockMessage(
+        reason === 'TAB_SWITCH'
+          ? 'Assessment failed because you switched to another browser tab or window.'
+          : 'Assessment Failed - Time Expired.'
+      );
+    } catch (error) {
+      console.error('Error recording test failure:', error);
+      setTestLockMessage(
+        reason === 'TAB_SWITCH'
+          ? 'Assessment failed because you switched to another browser tab or window.'
+          : 'Assessment Failed - Time Expired.'
+      );
     }
+  };
+
+  // Tab/window switch detection while a test is active -> automatic failure.
+  useEffect(() => {
+    if (!testStarted) return;
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        finalizeTestFailure('TAB_SWITCH');
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [testStarted, testId]);
+
+  // Display-only countdown. The SERVER expiry remains the authority: the
+  // countdown is anchored to the attempt's remainingSeconds (computed by the
+  // backend at load time) and self-corrects when the tab is throttled or the
+  // wall clock changes. The backend re-validates expiry on every fail/submit
+  // call, so this display can never extend the attempt.
+  useEffect(() => {
+    if (!testStarted || !testAttempt) return;
+
+    // Anchor once from the server's remainingSeconds; never re-derive from
+    // Date.now() against expiresAt (browser clock skew).
+    const anchored = Math.max(0, Math.floor(testAttempt.remainingSeconds ?? 0));
+    if (anchored <= 0) {
+      setTimeRemaining(0);
+      finalizeTestFailure('TIME_EXPIRED');
+      return;
+    }
+
+    const anchorEpochMs = Date.now();
+    const tick = () => {
+      const elapsed = Math.floor((Date.now() - anchorEpochMs) / 1000);
+      const remaining = Math.max(0, anchored - elapsed);
+      setTimeRemaining(remaining);
+      if (remaining <= 0) {
+        finalizeTestFailure('TIME_EXPIRED');
+      }
+    };
+
+    setTimeRemaining(anchored);
+    timerIntervalRef.current = setInterval(tick, 1000);
     return () => clearInterval(timerIntervalRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [testStarted]);
+  }, [testStarted, testAttempt]);
 
   // Camera monitoring
   useEffect(() => {
@@ -101,9 +170,28 @@ const AptitudeTraining = ({ currentStudent }) => {
     }
   };
 
-  const handleTopicSelect = (topic) => {
+  const handleTopicSelect = async (topic) => {
     setSelectedTopic(topic);
+    setTestLockMessage(null);
+    setTestAttempt(null);
+    setTopicAttempt(null);
     setMode('options');
+    // Fetch the server-side attempt state for this topic so the topic
+    // overview can offer Resume / Retake with the last result - the user is
+    // never trapped in a permanent lock state.
+    try {
+      const res = await assessmentAPI.aptitudeTestStatus(currentStudent.id, topic.name);
+      if (res.data?.success) {
+        setTopicAttempt(res.data);
+        const st = res.data.attempt?.status;
+        if (st === 'IN_PROGRESS') {
+          // Unfinished attempt: offer resume directly.
+          setTestLockMessage(null);
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching test status:', error);
+    }
   };
 
   const handleLearnConcepts = async () => {
@@ -136,7 +224,7 @@ const AptitudeTraining = ({ currentStudent }) => {
     setLoading(false);
   };
 
-  const handleStartTest = async (difficulty = 'medium') => {
+  const handleStartTest = async (difficulty = 'medium', retake = false) => {
     setLoading(true);
     try {
       const response = await fetch(`${API_URL}/aptitude/test/generate`, {
@@ -145,24 +233,61 @@ const AptitudeTraining = ({ currentStudent }) => {
         body: JSON.stringify({
           topic: selectedTopic.name,
           difficulty,
-          num_questions: 50
+          num_questions: TEST_QUESTION_COUNT,
+          student_id: currentStudent.id,
+          retake
         })
       });
       const data = await response.json();
       if (data.success) {
         setTestId(data.test_id);
         setTestQuestions(data.questions);
+        setTestAttempt(data.attempt || null);
+        setTestLockMessage(null);
+        testFinalizedRef.current = false;
         setCurrentQuestionIndex(0);
         setUserAnswers({});
-        setTimeRemaining(3600);
+        // Remaining time comes from the SERVER expiry, never from local state.
+        setTimeRemaining(data.attempt?.remainingSeconds ?? 3600);
         setMode('test');
         setTestStarted(true);
+        testStartedRef.current = true;
         setCameraEnabled(true);
+      } else if (response.status === 409 || data.canRetake || data.attempt) {
+        // Finished attempt WITHOUT retake. No longer a dead end: show the
+        // lock banner WITH a Retake Assessment action.
+        if (data.attempt) setTestAttempt(data.attempt);
+        const reason = data.failureReason || data.attempt?.failureReason;
+        setTestLockMessage(
+          reason === 'TAB_SWITCH'
+            ? 'Assessment failed because you switched to another browser tab or window.'
+            : reason === 'TIME_EXPIRED'
+            ? 'Assessment Failed - Time Expired.'
+            : (data.message || 'This assessment is already finished.')
+        );
+        // Preserve any previously loaded questions; if none exist, inject a
+        // single placeholder so the test-view branch renders (and shows the
+        // lock banner) rather than falling through to a blank screen.
+        setTestQuestions(prev => prev.length > 0 ? prev : [{ question: '', options: [] }]);
+        setMode('test'); // render the lock banner in test view
+      } else {
+        alert(data.message || 'Failed to start the test.');
       }
     } catch (error) {
       console.error('Error generating test:', error);
+      alert('Failed to start the test. Please try again.');
     }
     setLoading(false);
+  };
+
+  // RETAKE: archive the finished attempt server-side (retake=true) and
+  // start a clean attempt with fresh questions.
+  const handleRetakeTest = async () => {
+    if (!selectedTopic) return;
+    setTestLockMessage(null);
+    setTestResults(null);
+    setMode('options');
+    await handleStartTest('medium', true);
   };
 
   const handleAnswerSelect = (questionIndex, answer) => {
@@ -173,13 +298,20 @@ const AptitudeTraining = ({ currentStudent }) => {
   };
 
   const handleSubmitTest = async () => {
+    if (testFinalizedRef.current) return;
+    if (!testAttempt || testAttempt.status !== 'IN_PROGRESS') return;
+
+    testFinalizedRef.current = true;
     clearInterval(timerIntervalRef.current);
     setTestStarted(false);
+    testStartedRef.current = false;
     setCameraEnabled(false);
     setLoading(true);
 
     try {
-      const timeTaken = 3600 - timeRemaining;
+      const timeTaken = testAttempt.durationMinutes
+        ? testAttempt.durationMinutes * 60 - timeRemaining
+        : 3600 - timeRemaining;
       const response = await fetch(`${API_URL}/aptitude/test/submit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -194,12 +326,35 @@ const AptitudeTraining = ({ currentStudent }) => {
       });
       const data = await response.json();
       if (data.success) {
-        setTestResults(data.evaluation);
+        if (data.attempt) setTestAttempt(data.attempt);
+        setTestResults({
+          ...data.evaluation,
+          passed: data.evaluation?.passed,
+          failureReason: data.failureReason || null,
+        });
         setMode('results');
         fetchProgress();
+      } else if (response.status === 409) {
+        // Backend rejected: already submitted/failed/expired. The attempt is
+        // terminal - show the persistent lock banner (the submit request that
+        // arrives after the server deadline is stored FAILED/TIME_EXPIRED by
+        // the backend, never as a normal result).
+        if (data.attempt) setTestAttempt(data.attempt);
+        const reason = data.failureReason || data.attempt?.failureReason;
+        setTestLockMessage(
+          reason === 'TIME_EXPIRED'
+            ? 'Assessment Failed - Time Expired.'
+            : reason === 'TAB_SWITCH'
+            ? 'Assessment failed because you switched to another browser tab or window.'
+            : (data.message || 'This assessment has already been submitted.')
+        );
+        setMode('test'); // render the lock banner in test view
       }
     } catch (error) {
       console.error('Error submitting test:', error);
+      // Transient error (network/server): allow retry ONLY if the backend
+      // could not have finalized the attempt.
+      testFinalizedRef.current = false;
     }
     setLoading(false);
   };
@@ -317,8 +472,25 @@ const AptitudeTraining = ({ currentStudent }) => {
             disabled={loading}
           >
             <Trophy size={48} className="text-purple-600 mb-4" />
-            <h4 className="text-xl font-bold text-gray-800 mb-2">Take Test</h4>
-            <p className="text-gray-600">50 questions • 60 minutes • AI proctored</p>
+            <h4 className="text-xl font-bold text-gray-800 mb-2">
+              {topicAttempt?.attempt?.status === 'IN_PROGRESS' ? 'Resume Test'
+                : topicAttempt?.lastResult ? 'Retake Test' : 'Take Test'}
+            </h4>
+            <p className="text-gray-600">{TEST_QUESTION_COUNT} questions • 60 minutes • AI proctored</p>
+            {topicAttempt?.lastResult && (
+              <p className="text-sm mt-3 font-medium text-purple-700">
+                Last attempt: {topicAttempt.lastResult.failureReason === 'TAB_SWITCH'
+                  ? 'failed (tab switch)'
+                  : topicAttempt.lastResult.failureReason === 'TIME_EXPIRED'
+                  ? 'failed (time expired)'
+                  : `${topicAttempt.lastResult.score ?? 0}% — ${topicAttempt.lastResult.passed ? 'PASSED' : 'FAILED'}`}
+              </p>
+            )}
+            {topicAttempt?.attempt?.status === 'IN_PROGRESS' && (
+              <p className="text-sm mt-3 font-medium text-blue-700">
+                ⏱ Attempt in progress — {Math.floor((topicAttempt.attempt.remainingSeconds ?? 0) / 60)} min left
+              </p>
+            )}
           </button>
         </div>
       </div>
@@ -588,7 +760,7 @@ const AptitudeTraining = ({ currentStudent }) => {
         <div className="bg-gradient-to-r from-purple-600 to-indigo-600 p-6 rounded-2xl shadow-lg text-white flex items-center justify-between">
           <div>
             <h4 className="text-xl font-bold mb-1">Feeling Confident?</h4>
-            <p className="text-purple-100 text-sm">Take the full test with 50 questions and timer</p>
+            <p className="text-purple-100 text-sm">Take the full test with {TEST_QUESTION_COUNT} questions and a timer</p>
           </div>
           <button
             onClick={() => setMode('options')}
@@ -601,14 +773,52 @@ const AptitudeTraining = ({ currentStudent }) => {
     );
   }
 
-  // Test View
+  // Test View - full viewport (100vw x 100vh): the active assessment is a
+  // dedicated full-screen surface, not a card inside the dashboard column.
   if (mode === 'test' && testQuestions.length > 0) {
     const currentQuestion = testQuestions[currentQuestionIndex];
     const answeredCount = Object.keys(userAnswers).length;
     const progressPercentage = (answeredCount / testQuestions.length) * 100;
+    const testLocked = !!testLockMessage;
     
     return (
-      <div className="space-y-4">
+      <div className="assessment-fullscreen space-y-4">
+        {/* Lock banner: failed via tab switch / expiry, or already submitted.
+            NOT permanent anymore - Retake archives the old attempt and
+            starts a clean one. */}
+        {testLocked && (
+          <div className="bg-red-50 border-2 border-red-300 p-6 rounded-2xl text-center">
+            <p className="text-3xl mb-2">🔒</p>
+            <p className="text-lg font-bold text-red-700">{testLockMessage}</p>
+            <p className="text-sm text-gray-600 mt-2">
+              You can retake this assessment — a fresh attempt with new questions will be started.
+            </p>
+            <div className="mt-4 flex flex-col sm:flex-row gap-3 justify-center">
+              <button
+                onClick={handleRetakeTest}
+                className="px-6 py-2 bg-purple-600 text-white rounded-lg font-medium hover:bg-purple-700 flex items-center gap-2 justify-center"
+              >
+                <RotateCcw size={16} />
+                Retake Assessment
+              </button>
+              <button
+                onClick={() => { setMode('select'); setTestLockMessage(null); }}
+                className="px-6 py-2 bg-gray-200 text-gray-700 rounded-lg font-medium hover:bg-gray-300"
+              >
+                Back to Topics
+              </button>
+            </div>
+          </div>
+        )}
+
+        {!testLocked && (
+          <div className="bg-yellow-50 border border-yellow-300 p-3 rounded-xl text-center">
+            <p className="text-sm text-yellow-800 font-medium">
+              ⚠️ Switching to another browser tab or window will automatically fail this assessment.
+            </p>
+          </div>
+        )}
+
         {/* Test Header */}
         <div className="bg-gradient-to-r from-purple-600 to-indigo-600 p-6 rounded-2xl shadow-lg text-white">
           <div className="flex items-center justify-between mb-4">
@@ -624,10 +834,11 @@ const AptitudeTraining = ({ currentStudent }) => {
             
             <div className="flex items-center gap-4">
               <div className={`flex items-center gap-2 px-5 py-3 rounded-xl shadow-lg font-bold text-lg ${
+                testLocked ? 'bg-gray-500 text-white' :
                 timeRemaining < 300 ? 'bg-red-600 text-white animate-pulse' : 'bg-white bg-opacity-20 text-white'
               }`}>
                 <Clock size={24} />
-                <span>{formatTime(timeRemaining)}</span>
+                <span>{testLocked ? '00:00:00' : formatTime(timeRemaining)}</span>
               </div>
               
               {cameraEnabled && (
@@ -684,7 +895,8 @@ const AptitudeTraining = ({ currentStudent }) => {
                 <button
                   key={index}
                   onClick={() => handleAnswerSelect(currentQuestionIndex, option)}
-                  className={`w-full p-5 text-left rounded-xl border-2 transition-all group ${
+                  disabled={testLocked}
+                  className={`w-full p-5 text-left rounded-xl border-2 transition-all group disabled:opacity-50 disabled:cursor-not-allowed ${
                     userAnswers[currentQuestionIndex] === option
                       ? 'border-purple-500 bg-purple-50 shadow-md'
                       : 'border-gray-200 bg-white hover:border-purple-300 hover:bg-purple-50'
@@ -722,14 +934,16 @@ const AptitudeTraining = ({ currentStudent }) => {
           {currentQuestionIndex === testQuestions.length - 1 ? (
             <button
               onClick={handleSubmitTest}
-              className="px-8 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium"
+              disabled={testLocked}
+              className="px-8 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Submit Test
             </button>
           ) : (
             <button
               onClick={() => setCurrentQuestionIndex(prev => Math.min(testQuestions.length - 1, prev + 1))}
-              className="px-6 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700"
+              disabled={testLocked}
+              className="px-6 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Next
             </button>
@@ -744,7 +958,8 @@ const AptitudeTraining = ({ currentStudent }) => {
               <button
                 key={index}
                 onClick={() => setCurrentQuestionIndex(index)}
-                className={`w-10 h-10 rounded-lg font-medium text-sm ${
+                disabled={testLocked}
+                className={`w-10 h-10 rounded-lg font-medium text-sm disabled:cursor-not-allowed ${
                   index === currentQuestionIndex
                     ? 'bg-purple-600 text-white'
                     : userAnswers[index]
@@ -768,11 +983,35 @@ const AptitudeTraining = ({ currentStudent }) => {
         <h3 className="text-2xl font-bold text-gray-800">Test Results - {selectedTopic.name}</h3>
 
         {/* Score Card */}
-        <div className="bg-gradient-to-r from-purple-500 to-blue-500 p-8 rounded-xl shadow-lg text-white">
+        <div className={`p-8 rounded-xl shadow-lg text-white ${
+          testResults.failureReason ? 'bg-gradient-to-r from-red-500 to-red-700' :
+          testResults.passed === false ? 'bg-gradient-to-r from-orange-500 to-red-500' :
+          'bg-gradient-to-r from-purple-500 to-blue-500'
+        }`}>
           <div className="text-center">
-            <div className="text-6xl font-bold mb-2">{testResults.score}%</div>
-            <div className="text-xl mb-4">{testResults.performance.level}</div>
-            <div className="text-lg opacity-90">{testResults.performance.message}</div>
+            {testResults.failureReason ? (
+              <>
+                <div className="text-4xl mb-2">🔒</div>
+                <div className="text-xl font-bold mb-2">Assessment Failed</div>
+                <div className="text-lg opacity-90">
+                  {testResults.failureReason === 'TIME_EXPIRED'
+                    ? 'Assessment Failed - Time Expired.'
+                    : testResults.failureReason === 'TAB_SWITCH'
+                    ? 'Assessment failed because you switched to another browser tab or window.'
+                    : 'Assessment failed.'}
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="text-6xl font-bold mb-2">{testResults.score}%</div>
+                <div className="text-xl mb-4">
+                  {testResults.passed != null
+                    ? (testResults.passed ? '✓ PASSED' : '✗ FAILED')
+                    : testResults.performance.level}
+                </div>
+                <div className="text-lg opacity-90">{testResults.performance.message}</div>
+              </>
+            )}
           </div>
         </div>
 
@@ -803,6 +1042,7 @@ const AptitudeTraining = ({ currentStudent }) => {
         </div>
 
         {/* Detailed Results */}
+        {!testResults.failureReason && (
         <div className="space-y-4">
           <h4 className="text-xl font-bold text-gray-800">Detailed Answer Review</h4>
           {testResults.results.map((result, index) => (
@@ -866,8 +1106,10 @@ const AptitudeTraining = ({ currentStudent }) => {
             </div>
           ))}
         </div>
+        )}
 
-        {/* Actions */}
+        {/* Actions - retake ALWAYS offered: it archives the finished attempt
+            server-side and starts a clean attempt (no permanent lockout). */}
         <div className="flex gap-4">
           <button
             onClick={() => setMode('select')}
@@ -876,9 +1118,10 @@ const AptitudeTraining = ({ currentStudent }) => {
             Back to Topics
           </button>
           <button
-            onClick={() => handleStartTest('medium')}
-            className="flex-1 px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-medium"
+            onClick={handleRetakeTest}
+            className="flex-1 px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-medium flex items-center justify-center gap-2"
           >
+            <RotateCcw size={18} />
             Retake Test
           </button>
         </div>

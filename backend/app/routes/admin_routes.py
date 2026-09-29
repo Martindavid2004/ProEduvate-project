@@ -5,11 +5,34 @@ from ..database import users_collection, assignments_collection
 from ..models.user import user_helper, generate_student_scores
 from bson import ObjectId
 import datetime
+from functools import wraps
+from .auth_routes import verify_jwt_token
 
 admin_bp = Blueprint('admin_bp', __name__, url_prefix='/api/admin')
 
+def admin_required(f):
+    """Decorator to require admin or teacher role for a route"""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        auth_header = request.headers.get('Authorization', '')
+        if not auth_header.startswith('Bearer '):
+            return jsonify({"error": "Unauthorized: Missing or invalid token"}), 401
+
+        token = auth_header.split(' ', 1)[1]
+        payload = verify_jwt_token(token)
+        if not payload:
+            return jsonify({"error": "Unauthorized: Invalid or expired token"}), 401
+
+        # Allow both admin and teacher roles
+        if payload.get('role') not in ['admin', 'teacher']:
+            return jsonify({"error": "Forbidden: Admin/Teacher access required"}), 403
+
+        return f(*args, **kwargs)
+    return decorated
+
 # --- User Management ---
 @admin_bp.route('/users', methods=['POST'])
+@admin_required
 def add_user():
     data = request.get_json()
     if not data or not data.get('name') or not data.get('role'):
@@ -28,8 +51,10 @@ def add_user():
     elif data['role'] == 'student':
         if data.get('rollNo'):
             new_user['rollNo'] = data['rollNo']
-        # Add random scores if the user is a student
-        new_user.update(generate_student_scores())
+        # NO fabricated random scores: ATS/interview scores must come only
+        # from actual resume analysis / interview evaluation. Dummy random
+        # values (60-95) made new students look already-assessed.
+        pass
     elif data['role'] == 'hr':
         if data.get('companyName'):
             new_user['companyName'] = data['companyName']
@@ -41,6 +66,7 @@ def add_user():
     return jsonify(user_helper(created_user)), 201
 
 @admin_bp.route('/users', methods=['GET'])
+@admin_required
 def get_all_users():
     from ..database import submissions_collection
     
@@ -64,6 +90,7 @@ def get_all_users():
     return jsonify(all_users)
 
 @admin_bp.route('/users/<user_id>', methods=['DELETE'])
+@admin_required
 def delete_user(user_id):
     if not ObjectId.is_valid(user_id):
         return jsonify({"error": "Invalid user ID"}), 400
@@ -74,6 +101,7 @@ def delete_user(user_id):
 
 # --- Student-Teacher Assignment ---
 @admin_bp.route('/assign-students', methods=['POST'])
+@admin_required
 def assign_students_to_teacher():
     """Assign multiple students to a teacher"""
     try:
@@ -122,6 +150,7 @@ def assign_students_to_teacher():
 
 # --- Assignment Management ---
 @admin_bp.route('/assignments', methods=['GET'])
+@admin_required
 def get_assignments():
     """Get all assignments"""
     try:
@@ -142,6 +171,7 @@ def get_assignments():
         return jsonify({"error": "Failed to fetch assignments"}), 500
 
 @admin_bp.route('/assignments', methods=['POST'])
+@admin_required
 def assign_work():
     data = request.get_json()
     if not data or not data.get('title') or not data.get('teacherId') or not data.get('description'):
@@ -171,6 +201,7 @@ def assign_work():
     return jsonify({"success": True, "message": "Work assigned successfully", "assignment": created_assignment}), 201
 
 @admin_bp.route('/status', methods=['GET'])
+@admin_required
 def get_system_status():
     """Get system status overview"""
     try:
@@ -191,6 +222,7 @@ def get_system_status():
         return jsonify({"error": "Failed to fetch status"}), 500
 
 @admin_bp.route('/tasks', methods=['GET'])
+@admin_required
 def get_admin_tasks():
     """Get admin tasks (assignments created by admin)"""
     try:
@@ -218,6 +250,7 @@ def get_admin_tasks():
         return jsonify({"error": "Failed to fetch tasks"}), 500
 
 @admin_bp.route('/tasks/<task_id>', methods=['PUT'])
+@admin_required
 def update_admin_task(task_id):
     """Update an admin task"""
     try:
@@ -252,6 +285,7 @@ def update_admin_task(task_id):
         return jsonify({"error": "Failed to update task"}), 500
 
 @admin_bp.route('/tasks/<task_id>', methods=['DELETE'])
+@admin_required
 def delete_admin_task(task_id):
     """Delete an admin task"""
     try:

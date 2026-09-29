@@ -343,17 +343,67 @@ def get_ai_agent_response():
         # The exact transcription of what the user JUST said - the agent must
         # respond to this, never to stale/cached conversation state.
         latest_user_text = data.get('latest_user_text', '') or ''
+        # Speaker-aware GD: the responding agent can address the PREVIOUS
+        # speaker, who may be another AI agent (agent→agent discussion) or the
+        # user. The frontend supplies who spoke last and what they said so the
+        # response is always grounded in the real conversation history.
+        respond_to_name = (data.get('respond_to_name') or '').strip() or None
+        respond_to_type = (data.get('respond_to_type') or 'user').strip().lower()
+        if respond_to_type not in ('user', 'agent'):
+            respond_to_type = 'user'
+        respond_to_text = data.get('respond_to_text', '') or ''
+        agent_name = (data.get('agent_name') or '').strip() or None
+
+        logger.info(
+            "[GD-TURN] Agent-response request: respond_to_type=%s respond_to_name=%s "
+            "agent_name=%s latest_user_text_len=%d",
+            respond_to_type, respond_to_name, agent_name, len(latest_user_text)
+        )
         
         if not topic:
             return error_response("Topic is required", 400)
-        
-        # Generate AI agent response using GDService
+
+        # [GD-TURN] request trail: who is responding to whom.
+        logger.info(
+            "[GD-TURN] Agent-response request: respond_to_type=%s respond_to_name=%s "
+            "agent_name=%s latest_user_text_len=%d",
+            respond_to_type, respond_to_name, agent_name, len(latest_user_text)
+        )
+
+        # ---- Dedicated topic-relevance gate (authoritative, semantic) ----
+        # Every USER statement is checked BEFORE any normal agent response is
+        # generated. When the statement is unrelated to the topic the canonical
+        # off-topic reply is returned immediately - the LLM is never given the
+        # chance to connect the unrelated statement to the topic.
+        off_topic_reply = False
+        if respond_to_type != 'agent' and latest_user_text.strip():
+            relevance = gd_service.check_topic_relevance(topic, latest_user_text, context)
+            if not relevance.get("is_relevant", True):
+                logger.info(
+                    "[RELEVANCE] UNRELATED (method=%s confidence=%s) -> returning canonical off-topic reply",
+                    relevance.get("method"), relevance.get("confidence"),
+                )
+                return jsonify({
+                    "response": GDService.OFF_TOPIC_REPLY,
+                    "off_topic_reply": True,
+                    "relevance": relevance,
+                    "agent_response_available": True,
+                    "success": True
+                }), 200
+
+        # Generate AI agent response using GDService (the relevance verdict is
+        # passed through so the same check is never run twice).
         response_text = gd_service.generate_ai_agent_response(
             topic=topic,
             context=context,
             agent_personality=agent_personality,
             agent_gender=agent_gender,
-            latest_user_text=latest_user_text
+            latest_user_text=latest_user_text,
+            respond_to_name=respond_to_name,
+            respond_to_type=respond_to_type,
+            respond_to_text=respond_to_text,
+            agent_name=agent_name,
+            relevance=relevance if respond_to_type != 'agent' and latest_user_text.strip() else None,
         )
 
         # Explicit signal when no LLM is configured/reachable: the frontend
@@ -893,7 +943,15 @@ def evaluate_gd_round(round_id):
 
         combined_text = " ".join(user_contributions)
         evaluation_criteria = gd_round.get("evaluation_criteria", DEFAULT_EVALUATION_CRITERIA)
-        topic = gd_round.get("topic", "General Topic")
+        topic = gd_round.get("topic") or gd_round.get("available_topics", [None])[0] or DEFAULT_GD_TOPICS[0]
+        if gd_round.get("topic") != topic:
+            # Persist the fallback topic so results and future evaluations
+            # reference a real topic (a round must never be evaluated against
+            # topic=None: the LLM then judges the speech against "None" and
+            # every criterion scores 0 with evidence "none").
+            gd_rounds_collection.update_one(
+                {"_id": round_obj_id}, {"$set": {"topic": topic}}
+            )
 
         # [EVALUATION_INPUT] audit trail: the exact user contributions of THIS
         # round the evaluator will receive - verifiable against the frontend
@@ -971,8 +1029,17 @@ def evaluate_gd_round(round_id):
         if not ok:
             print(f"[SCORE_VALIDATION] Errors: {validation_errors}")
             # Don't reject outright: log and continue with clamped values
-        # Re-derive total from validated clamped scores (prevents math drift)
+        # Re-derive total from validated clamped scores (prevents math drift).
+        # This backend total is the single AUTHORITATIVE weighted total; the
+        # frontend must display it instead of recomputing a different one.
         student_total_score = computed_total
+
+        # [SCORING] debug trail: per-criterion scores, weights and the exact
+        # weighted total that ranking will use. Log numbers only - no speech.
+        print(f"[SCORING] Participant: {user.get('name', 'You')} (student)")
+        for crit_key, crit_val in formatted_student_scores.items():
+            print(f"[SCORING]   {crit_key}: {crit_val['score']} (weight {crit_val['weight']}%)")
+        print(f"[SCORING] Weighted total: {round(student_total_score, 2)} (method={evaluation_method}, topic_related={topic_related})")
         
         participants = []
         participants.append({
@@ -1000,13 +1067,32 @@ def evaluate_gd_round(round_id):
                 "total_score": ai_score_data["total_score"],
                 "rank": 0
             })
-            
+
+        # ---- Dynamic ranking (standard competition method) ----
+        # Sort by total score descending. Equal scores share the SAME rank and
+        # the next rank is skipped (90,90,80 -> 1,1,3), so ties are handled
+        # consistently instead of arbitrarily. Rank is recomputed from the
+        # CURRENT scores on every evaluation - it is never stored or defaulted.
         participants.sort(key=lambda x: x["total_score"], reverse=True)
-        for idx, participant in enumerate(participants):
-            participant["rank"] = idx + 1
-            
-        top_3 = participants[:3]
+        last_score = None
+        last_rank = 0
+        for idx, participant in enumerate(participants, start=1):
+            if last_score is not None and abs(participant["total_score"] - last_score) < 1e-9:
+                participant["rank"] = last_rank  # tie: same rank as previous
+            else:
+                participant["rank"] = idx
+                last_rank = idx
+                last_score = participant["total_score"]
+
+        # [RANKING] debug trail: verifies the rank is derived from current data.
+        print(f"[RANKING] Participants evaluated: {len(participants)}")
+        for p in participants:
+            print(f"[RANKING]   {p['name']} ({p['type']}): total={p['total_score']} rank={p['rank']}")
         student_rank = next((p["rank"] for p in participants if p["type"] == "student"), 1)
+        print(f"[RANKING] Current participant score: {round(student_total_score, 2)}")
+        print(f"[RANKING] Calculated rank: {student_rank}")
+
+        top_3 = participants[:3]
         
         result = {
             "round_id": str(round_obj_id),
@@ -1088,8 +1174,11 @@ def validate_score_result(formatted_scores, criteria, combined_text):
 def generate_ai_agent_score(criteria, agent_id=None, round_id=None):
     """Generate AI agent scores using a seeded normal distribution so scores
     are deterministic for a given (agent_id, round_id) pair — same round always
-    produces the same AI ranking.  Mean ≈ 72, std ≈ 9 approximates a realistic
-    bell curve for good-but-not-exceptional GD performance.
+    produces the same AI ranking. Mean ≈ 60, std ≈ 18 with criterion-level
+    variance approximates a realistic, WIDE bell curve of GD performance: some
+    agents are weak, some are strong. The previous narrow [45, 92] clamp at
+    mean 72 kept every agent's total above a typical student's score, which is
+    why the student's rank appeared stuck at the last position (8 of 8).
 
     This is explicitly SIMULATED because AI agents do not have real transcripts;
     it is documented as such and NOT random each call.
@@ -1101,11 +1190,16 @@ def generate_ai_agent_score(criteria, agent_id=None, round_id=None):
     import random as _rand_mod
     rng = _rand_mod.Random(seed)
 
+    # Per-agent skill level: shifts ALL criteria of one agent up/down together
+    # so totals spread realistically (weak/average/strong agents), instead of
+    # averaging out to a narrow band around the mean.
+    level = rng.gauss(60, 20)
+
     scores = {}
     for criterion_key, criterion_data in criteria.items():
-        # Normal distribution with mean=72, std=9, clamped [45, 92]
-        base = rng.gauss(72, 9)
-        base = max(45.0, min(92.0, base))
+        # Criterion-level variation around the agent's skill level
+        base = rng.gauss(level, 10)
+        base = max(10.0, min(96.0, base))
         scores[criterion_key] = {
             "score": round(base, 1),
             "weight": criterion_data["weight"],

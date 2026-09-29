@@ -3,7 +3,18 @@ import React, { createContext, useState, useContext, useEffect } from 'react';
 const AuthContext = createContext(null);
 
 export const AuthProvider = ({ children }) => {
-  const [user, setUser] = useState(null);
+  const [user, setUser] = useState(() => {
+    // Restore user from localStorage on initial load
+    try {
+      const savedUser = localStorage.getItem('user');
+      if (savedUser) {
+        return JSON.parse(savedUser);
+      }
+    } catch (e) {
+      // Ignore parse errors
+    }
+    return null;
+  });
   const [theme, setTheme] = useState('light');
 
   useEffect(() => {
@@ -15,13 +26,16 @@ export const AuthProvider = ({ children }) => {
     }
   }, []);
 
-  const login = (username, role) => {
-    setUser({ username, role });
+  const login = (userData) => {
+    setUser(userData);
+    localStorage.setItem('user', JSON.stringify(userData));
     return true;
   };
 
   const logout = () => {
     setUser(null);
+    localStorage.removeItem('user');
+    localStorage.removeItem('authToken');
   };
 
   const toggleTheme = () => {

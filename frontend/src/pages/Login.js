@@ -62,12 +62,17 @@ const Login = () => {
         const demoData = await demoResponse.json();
 
         if (demoData.success) {
-          // Store minimal user data for demo accounts
+          // Store demo user data. The backend now auto-provisions a REAL
+          // users-collection document for demo logins and returns its actual
+          // ObjectId as `id` - use it so every score/resume write keys on a
+          // genuine _id (id:"student" made profile scores land nowhere).
+          // Older backends may still return id:"<username>": fall back to
+          // that only when the real id is missing.
           const demoUser = {
-            name: email.charAt(0).toUpperCase() + email.slice(1),
-            email: `${email}@demo.com`,
-            role: email,
-            id: email
+            name: demoData.user?.name || (email.charAt(0).toUpperCase() + email.slice(1)),
+            email: demoData.user?.email || `${email}@demo.com`,
+            role: demoData.user?.role || email,
+            id: demoData.user?.id || email
           };
           localStorage.setItem('user', JSON.stringify(demoUser));
           

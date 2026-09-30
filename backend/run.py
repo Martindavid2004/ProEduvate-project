@@ -5,6 +5,8 @@ import google.generativeai as genai
 from app import create_app
 from flask import render_template, request, jsonify, session, redirect, url_for, send_from_directory
 from flask_cors import CORS # Added to handle CORS errors
+from werkzeug.security import generate_password_hash
+import datetime
 
 # 1. Load the .env file to get the Google API Key
 load_dotenv()
@@ -70,6 +72,37 @@ def index():
         return redirect(url_for(f'{session["user_role"]}_dashboard'))
     return render_template('login.html')
 
+def _ensure_demo_user(username):
+    """Return a REAL users-collection document for a demo login.
+
+    Demo logins used to return id:"student", which is not a Mongo id: every
+    score/resume write keyed on that id silently landed nowhere and the
+    student profile showed N/A forever. Instead we auto-provision a real
+    document ({username}@demo.com) once and return its actual _id, so the
+    frontend session carries a genuine ObjectId from the very first request.
+    """
+    from app.database import users_collection
+    email = f"{username}@demo.com"
+    user = users_collection.find_one({"email": email})
+    if user:
+        return user
+    doc = {
+        "name": username.capitalize(),
+        "email": email,
+        "role": username,
+        "password": generate_password_hash('password'),
+        "attendance": 0,
+        "average_score": 0,
+        "createdAt": datetime.datetime.utcnow(),
+        "isActive": True,
+        "isDemoAccount": True,
+    }
+    result = users_collection.insert_one(doc)
+    print(f"[DEMO LOGIN] auto-provisioned user document for {email} "
+          f"(_id={result.inserted_id})")
+    return users_collection.find_one({"_id": result.inserted_id})
+
+
 @app.route('/login', methods=['POST'])
 def login():
     data = request.get_json()
@@ -80,17 +113,21 @@ def login():
         session['user_role'] = username
         session['username'] = username
         
+        # Real user document (auto-provisioned on first demo login) so every
+        # downstream write has a genuine _id to key on.
+        user = _ensure_demo_user(username)
+        
         # Generate JWT token for demo user
         from app.routes.auth_routes import generate_jwt_token
-        token = generate_jwt_token(username, f"{username}@demo.com", username)
+        token = generate_jwt_token(user["_id"], user["email"], username)
         
         return jsonify({
             'success': True,
             'token': token,
             'user': {
-                'id': username,
-                'name': username.capitalize(),
-                'email': f"{username}@demo.com",
+                'id': str(user["_id"]),
+                'name': user["name"],
+                'email': user["email"],
                 'role': username
             },
             'redirect': f'/{username}'

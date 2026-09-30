@@ -122,8 +122,10 @@ export const studentAPI = {
 
 // Interview API calls
 export const interviewAPI = {
-  startInterview: (data = {}) => api.post('/interview/start', data),
-  submitAnswers: (answersData) => api.post('/interview/evaluate', answersData),
+  // Optional per-call axios config (e.g. { timeout: 75000 }) so callers can
+  // bound the synchronous question-generation/evaluation round trips.
+  startInterview: (data = {}, config = {}) => api.post('/interview/start', data, config),
+  submitAnswers: (answersData, config = {}) => api.post('/interview/evaluate', answersData, config),
   saveAnswer: (data) => api.post('/interview/answer', data),
   getSession: (sessionId) => api.get(`/interview/session/${sessionId}`),
   // Voice-mode speech-to-text: REUSES the existing /gd/transcribe endpoint,

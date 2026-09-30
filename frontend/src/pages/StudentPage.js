@@ -275,7 +275,8 @@ const StudentPage = () => {
       });
     }
 
-    if (progress?.interviewScore) {
+    // != null (not truthiness): a 0 score is still a recorded result.
+    if (progress?.interviewScore != null) {
       list.push({
         id: 'hr-interview-score',
         type: 'hr',
@@ -1074,16 +1075,28 @@ const StudentPage = () => {
       await studentAPI.uploadResume(currentStudent.id, formData);
       setInterviewResumeReady(true);
       setInterviewResumeGate(false);
+      // Reset the input so re-uploading a DIFFERENT file later is picked up
+      // (a still-attached File object would silently reuse the old file).
+      fileInput.value = '';
       const mode = pendingInterviewMode;
       setPendingInterviewMode(null);
-      // Refresh dashboard state (resume score etc.) after the upload.
-      loadStudentData();
+      // Refresh dashboard state (resume score etc.) and WAIT for it: the
+      // profile cards and the interview gate must reflect the just-uploaded
+      // resume before the interview modal opens. Firing without await here
+      // raced the interview start and left the dashboard stale.
+      await loadStudentData();
       if (autoStartMode || mode) {
         await startInterview(autoStartMode || mode);
       }
     } catch (error) {
       console.error('Error uploading resume for interview:', error);
-      alert(error.response?.data?.error || 'Resume upload failed. Please try again.');
+      // The upload endpoint 500s when the file could not be parsed (e.g. a
+      // scanned/image-only PDF). Surface that clearly instead of a generic
+      // "upload failed" so the student can pick a text-based resume.
+      const detail = error.response?.data?.error;
+      alert(detail
+        ? `Resume upload failed: ${detail}`
+        : 'Resume upload failed. Please try again.');
     } finally {
       setInterviewResumeUploading(false);
     }
@@ -1146,11 +1159,16 @@ const StudentPage = () => {
     setInterviewResuming(false);
     
     try {
+      // Bounded start request: question generation is synchronous server-side
+      // (parse resume -> LLM -> fallback deck). An unbounded axios wait used
+      // to leave the popup spinning forever when the backend LLM chain was
+      // slow; 75s bounds the wait while the backend's own 90s generation
+      // budget + offline fallback deck still resolves first in practice.
       const response = await interviewAPI.startInterview({
         user_id: currentStudent.id,
         mode,
         session_id: null,
-      });
+      }, { timeout: 75000 });
       const data = response.data || {};
       const questions = data.questions || data.session?.questions || [];
       const sessionId = data.session?.sessionId || null;
@@ -1498,13 +1516,15 @@ const StudentPage = () => {
     releaseInterviewStream();
 
     try {
+      // Bounded evaluate request: evaluation is synchronous evidence-based
+      // scoring server-side; never leave the student on an endless spinner.
       const response = await interviewAPI.submitAnswers({
         questions: interviewQuestions,
         answers: answers,
         studentId: currentStudent.id,
         user_id: currentStudent.id,
         session_id: interviewSessionId,
-      });
+      }, { timeout: 60000 });
       
       const data = response.data || {};
       console.log(`[INTERVIEW] Evaluation completed. Final score: ${data.score}. ` +
@@ -1701,7 +1721,9 @@ const StudentPage = () => {
                   <div className="bg-white p-6 rounded-xl shadow-md border-l-4 border-green-500">
                     <h4 className="text-lg font-semibold text-gray-600">Interview Score</h4>
                     <p className="text-4xl font-bold text-green-600 mt-2">
-                      {progress?.interviewScore ? `${progress.interviewScore}%` : 'N/A'}
+                      {/* != null check (not truthiness): a completed interview
+                          that scored 0 is a REAL score, never 'N/A'. */}
+                      {progress?.interviewScore != null ? `${progress.interviewScore}%` : 'N/A'}
                     </p>
                     {/* PASS/FAIL recorded by /api/interview/evaluate - shown
                         only when a result actually exists (no-result state
@@ -1900,7 +1922,9 @@ const StudentPage = () => {
                   <div className="bg-white p-6 rounded-xl shadow-md border-l-4 border-green-500">
                     <h3 className="text-lg font-semibold text-gray-600">Interview Score</h3>
                     <p className="text-4xl font-bold text-green-600 mt-2">
-                      {progress?.interviewScore ? `${progress.interviewScore}%` : 'N/A'}
+                      {/* != null check (not truthiness): a completed interview
+                          that scored 0 is a REAL score, never 'N/A'. */}
+                      {progress?.interviewScore != null ? `${progress.interviewScore}%` : 'N/A'}
                     </p>
                   </div>
                   

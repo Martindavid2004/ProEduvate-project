@@ -11,6 +11,7 @@ import os
 from ..services.ai_service import extract_text_from_pdf, extract_resume_text, get_ats_analysis
 from ..services import assessment_state
 from ..services.lambda_service import execute_python_code_lambda
+from ..services.user_resolution import resolve_user
 
 student_bp = Blueprint('student_bp', __name__, url_prefix='/api/student')
 
@@ -152,23 +153,18 @@ def get_student_assignments_by_id(user_id):
 def get_student_progress(user_id):
     """Get progress data for a specific student"""
     try:
-        # Get student information
-        student = None
-        if ObjectId.is_valid(user_id):
-            student = users_collection.find_one({"_id": ObjectId(user_id)})
+        # Resolve the student through the SHARED resolver (same strategy as
+        # /api/interview/*): registered ObjectId, stale e-mail id or demo
+        # login ('student') must all land on the same user document whose
+        # interviewScore /interview/evaluate wrote. The old lookup chain
+        # could fall through to a random student - the profile card then
+        # showed someone else's (or no) result.
+        student = resolve_user(user_id, users_collection)["user"]
         
         if not student:
-            try:
-                student = users_collection.find_one({"id": int(user_id)})
-            except:
-                student = users_collection.find_one({"id": user_id})
-        
-        if not student:
-            # Try finding any student or fallback for demo user
-            student = users_collection.find_one({"role": "student"})
-        
-        if not student:
-            student = {"average_score": 85, "attendance": 95, "resumeScore": 80, "interviewScore": 88, "quizScore": 90}
+            # No fabricated demo fallback: an unknown user must return 404 so
+            # the UI shows a real error instead of someone else's 88% score.
+            return jsonify({"error": "Student not found"}), 404
         
         # Calculate progress metrics
         total_assignments = assignments_collection.count_documents({}) + teacher_assignments_collection.count_documents({})
@@ -207,7 +203,7 @@ def get_student_progress(user_id):
             "submittedAssignments": completed_assignments,
             "completionRate": (completed_assignments / total_assignments * 100) if total_assignments > 0 else 0,
             "averageScore": student.get("average_score", 0),
-            "attendanceRate": student.get("attendance", 95),
+            "attendanceRate": student.get("attendance", 0),
             "resumeScore": student.get("resumeScore"),
             # True once the student uploaded a resume (gatekeeper state for
             # the AI Interview). No default 80/True: the dashboard must show

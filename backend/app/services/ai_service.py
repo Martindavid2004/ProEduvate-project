@@ -221,15 +221,248 @@ def _enforce_difficulty_distribution(questions, num_questions):
     )
     for q, label in zip(ordered, labels):
         q["difficulty"] = label
-    return ordered[:num_questions] if num_questions else ordered
+    return ordered[:num_questions] if num_questions else ordered# ---------------------------------------------------------------------------
+# Resume highlighting (projects + skills). Reads ONLY the resume text -
+# nothing is ever invented. Shared by the Ollama prompt builder below and
+# the offline fallback generator in interview_routes.py.
+# ---------------------------------------------------------------------------
+# Broad tech/skill lexicon (case-insensitive, word-boundary matched). Only
+# terms ACTUALLY present in the resume are ever reported by
+# extract_resume_highlights - the list being long costs nothing; inventing
+# terms is what is forbidden.
+_SKILLS_KEYWORDS = [
+    # Languages
+    'Java', 'Python', 'JavaScript', 'TypeScript', 'C', 'C++', 'C#', 'PHP',
+    'Kotlin', 'Swift', 'Go', 'Rust', 'Ruby', 'R', 'MATLAB', 'Scala', 'Dart',
+    # Web frameworks / libraries
+    'React', 'Angular', 'Vue.js', 'Next.js', 'Node.js', 'Express.js', 'Flask',
+    'Django', 'FastAPI', 'Spring', 'Spring Boot', 'Hibernate', 'Laravel',
+    'Bootstrap', 'Tailwind CSS', 'jQuery', 'HTML', 'CSS', 'Sass', 'Redux',
+    # Mobile
+    'Android', 'Flutter', 'React Native', 'Ionic',
+    # Data / ML / AI
+    'Machine Learning', 'Deep Learning', 'Data Science', 'NLP', 'Computer Vision',
+    'OpenCV', 'TensorFlow', 'PyTorch', 'Keras', 'Scikit-learn', 'Pandas',
+    'NumPy', 'Matplotlib', 'Seaborn', 'XGBoost', 'YOLO', 'Hugging Face',
+    'LangChain', 'Generative AI', 'LLM',
+    # Data stores / search
+    'SQL', 'MySQL', 'PostgreSQL', 'MongoDB', 'SQLite', 'Firebase', 'Redis',
+    'Oracle', 'DynamoDB', 'Elasticsearch', 'Cassandra',
+    # Cloud / DevOps / tools
+    'AWS', 'Azure', 'Google Cloud', 'GCP', 'Docker', 'Kubernetes', 'Jenkins',
+    'Git', 'GitHub', 'GitLab', 'CI/CD', 'Linux', 'Bash', 'Terraform', 'Ansible',
+    'Nginx', 'Apache', 'Vercel', 'Netlify', 'Heroku', 'Render',
+    # Architecture / practices
+    'REST API', 'REST', 'GraphQL', 'WebSockets', 'Socket.io', 'Microservices',
+    'OAuth', 'JWT', 'RabbitMQ', 'Kafka', 'Spark', 'Hadoop', 'ETL', 'Power BI',
+    'Tableau', 'Blockchain', 'Solidity', 'Android Studio', 'VS Code', 'Figma',
+    'Jira', 'Agile', 'Scrum', 'Selenium', 'Jest', 'Pytest', 'JUnit', 'Cypress',
+    'Data Structures', 'Algorithms', 'OOP', 'Operating Systems', 'Networking',
+    'Cyber Security', 'Cryptography', 'UI/UX',
+]
+
+# Project header formats matched (one project per line):
+#   "MedVision AI - FastAPI, React, MongoDB"
+#   "Crime Department Project | Python OpenCV MySQL"
+#   "Smart Attendance System: Flask, OpenCV"
+#   "- E-Commerce Platform (MERN stack)"      (bullet + parenthesised tech)
+#   "* Library Management System using Java and MySQL"  ("using ..." tech)
+_PROJECT_HEADER = re.compile(
+    r'^\s*(?:[-*\u2022]+\s*)?'
+    r'([A-Z][A-Za-z0-9 .&+_/]{2,60}?)'
+    r'\s*(?:[\-\u2013\u2014:|]\s*|\.+\s*|\()'   # - | : ... ( separators
+    r'(.+?)'                                      # tech string
+    r'(?:\))?\s*$')
+
+# "Project Name using X, Y and Z" (no separator before the tech list)
+_PROJECT_USING = re.compile(
+    r'^\s*(?:[-*\u2022]+\s*)?'
+    r'([A-Z][A-Za-z0-9 .&+_/?]{2,60}?)'
+    r'\s+using\s+(.+)$', re.IGNORECASE)
+
+# Free-form tech words inside a project's tech string (catches stacks not in
+# the curated lexicon, e.g. 'YOLOv8', 'Raspberry Pi', 'OpenCV').
+_TECH_TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9+#./ _-]{1,30}")
 
 
-def generate_interview_questions_ollama(resume_text, difficulty="medium", num_questions=10):
+def extract_resume_highlights(resume_text):
+    """Extract skills and project names/tech-stacks actually present in the resume.
+
+    Returns (found_skills, projects) where projects is a list of
+    (project_name, tech_string). Every term returned is matched verbatim in
+    the resume text - nothing is invented. Tech strings are NORMALISED to the
+    curated lexicon when the resume spells them that way ("built with
+    Python, OpenCV and a MySQL database" -> "Python, OpenCV, MySQL") so the
+    LLM digest and offline questions cite the exact canonical tool names.
+    """
+    found_skills = []
+    projects = []
+    if not resume_text:
+        return found_skills, projects
+
+    _canon = {s.lower(): s for s in _SKILLS_KEYWORDS}
+
+    for skill in _SKILLS_KEYWORDS:
+        if re.search(r'\b' + re.escape(skill) + r'\b', resume_text, re.IGNORECASE):
+            found_skills.append(skill)
+
+    def _normalise_tech(tech_str):
+        """Canonicalise a raw tech string against the lexicon, preserving
+        first-appearance order and de-duplicating."""
+        seen, out = set(), []
+        # Split on list separators AND the glue word 'and' so "Flask, OpenCV
+        # and SQLite" -> [Flask, OpenCV, SQLite].
+        parts = re.split(r"[,;/]|\band\b", tech_str or '')
+        for part in parts:
+            for token in _TECH_TOKEN.findall(part):
+                t = token.strip(' .,-')
+                if not t or len(t) < 2:
+                    continue
+                key = t.lower()
+                canon = _canon.get(key)
+                if canon:
+                    t = canon
+                elif key not in seen and len(t) <= 30:
+                    # Keep unknown-but-plausible tech tokens as-is (project
+                    # specific hardware/models); drop boilerplate glue words.
+                    if key in ('and', 'the', 'with', 'using', 'based', 'stack',
+                               'built', 'developed', 'etc'):
+                        continue
+                elif canon is None:
+                    continue
+                if key not in seen:
+                    seen.add(key)
+                    out.append(t)
+        return ', '.join(out[:6])
+
+    for raw_line in resume_text.splitlines():
+        line = raw_line.strip()
+        if not line or len(line) > 160:
+            continue
+        # Strip leading bullets so "- Crime Dept Project | Python" matches.
+        stripped = re.sub(r'^[-*\u2022]+\s*', '', line)
+        name = tech = None
+        m = _PROJECT_HEADER.match(stripped)
+        if m:
+            name, tech = m.group(1).strip(), m.group(2).strip()
+        else:
+            mu = _PROJECT_USING.match(stripped)
+            if mu:
+                name, tech = mu.group(1).strip(), mu.group(2).strip()
+        if not name:
+            continue
+        # Skip lines that look like section headers / contact info rather
+        # than projects.
+        if re.search(r'(education|experience|skills|certification|achievement'
+                     r'|declaration|contact|profile|summary|objective|intern)',
+                     name, re.IGNORECASE):
+            continue
+        if re.search(r'@(gmail|hotmail|yahoo|outlook)', name):
+            continue
+        tech = _normalise_tech(tech)
+        # Date/period-only "tech" strings ("Summer 2025", "Jan 2024 - Present")
+        # mark an EXPERIENCE line, not a project - drop it.
+        if not tech or re.fullmatch(
+                r'[\s\d,\-\u2013]*(summer|winter|fall|spring|mon|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|present)?[\s\d,\-\u2013]*',
+                tech, re.IGNORECASE):
+            continue
+        projects.append((name, tech))
+    return found_skills, projects[:10]
+
+
+def build_resume_highlights_digest(resume_text, max_projects=6):
+    """Compact bullet digest of the resume's projects/skills for the LLM prompt.
+
+    Small local models follow a short, explicit extract far more reliably
+    than a long raw resume, so the digest anchors their questions to the
+    candidate's REAL projects and tech stack.
+    """
+    skills, projects = extract_resume_highlights(resume_text)
+    lines = []
+    if projects:
+        lines.append('Projects found in the resume (name -> technologies):')
+        for name, tech in projects[:max_projects]:
+            lines.append(f'- {name} -> {tech}')
+    if skills:
+        lines.append('Skills/technologies listed in the resume: ' + ', '.join(skills))
+    return '\n'.join(lines)
+
+
+# Words that carry no resume-specific meaning when matching a generated
+# question back to the resume text. Distinctive words (project names, tech
+# terms, domain nouns) are what count as grounding evidence.
+_GROUNDING_STOPWORDS = frozenset({
+    'tell', 'about', 'your', 'yourself', 'what', 'when', 'where', 'which',
+    'would', 'could', 'should', 'shall', 'there', 'here', 'have', 'has',
+    'had', 'with', 'this', 'that', 'these', 'those', 'they', 'them', 'from',
+    'into', 'onto', 'over', 'under', 'explain', 'describe', 'discuss',
+    'experience', 'experiences', 'interview', 'candidate', 'question',
+    'questions', 'answer', 'answers', 'example', 'instance', 'time', 'walk',
+    'through', 'challenge', 'challenges', 'situation', 'strength',
+    'strengths', 'weakness', 'weaknesses', 'future', 'years', 'role',
+    'company', 'good', 'great', 'make', 'made', 'easy', 'medium', 'hard',
+    'does', 'did', 'doing', 'will', 'can', 'and', 'the', 'for', 'you',
+    'are', 'was', 'were', 'how', 'why', 'who', 'whom', 'not', 'but',
+    'use', 'used', 'using', 'give', 'gave', 'some', 'any', 'also',
+})
+
+
+def _dedupe_questions(questions):
+    """Remove near-duplicate questions (case/punctuation-insensitive)."""
+    seen = set()
+    out = []
+    for q in questions or []:
+        key = re.sub(r'\s+', ' ', re.sub(r'[^a-z0-9 ]', '', str(q).lower())).strip()
+        if key and key not in seen:
+            seen.add(key)
+            out.append(q)
+    return out
+
+
+def filter_ungrounded_questions(questions, resume_text):
+    """STRICT resume grounding: drop questions that share NO vocabulary with
+    the resume text.
+
+    A question whose distinctive words (len >= 4, non-stopword) never appear
+    in the resume is either generic/boilerplate ("Where do you see yourself
+    in 5 years?") or references invented technology - both violate the
+    resume-only requirement. Dropped questions are replaced by the caller's
+    resume-grounded offline generator.
+    """
+    resume_lower = re.sub(r'\s+', ' ', str(resume_text or '')).lower()
+    kept = []
+    for q in questions or []:
+        words = re.findall(r"[a-z0-9][a-z0-9+#.\-]{2,}", str(q).lower())
+        grounded = any(
+            len(w) >= 4 and w not in _GROUNDING_STOPWORDS
+            and re.search(r'\b' + re.escape(w), resume_lower)
+            for w in words
+        )
+        if grounded:
+            kept.append(q)
+        else:
+            print(f"[OLLAMA] Grounding filter dropped non-resume question: "
+                  f"{str(q)[:90]!r}")
+    return kept
+
+
+def generate_interview_questions_ollama(resume_text, difficulty="medium", num_questions=10,
+                                        timeout_seconds=None):
     """Generate resume-based interview questions via the LOCAL Ollama LLM.
-    The prompt enforces the required difficulty distribution
+
+    The prompt enforces the required difficulty distribution
     (Easy 40% / Medium 40% / Hard 20%) and grounds every question ONLY in
-    the candidate's actual projects, skills and experience.
-    Returns a list of formatted question strings, or None when Ollama is
+    the candidate's actual projects, skills and experience. A post-generation
+    grounding filter drops any question that shares no vocabulary with the
+    resume, so generic or invented questions never reach the student.
+
+    timeout_seconds: wall-clock cap for THIS call. When given it overrides
+    OLLAMA_TIMEOUT_SECONDS and is always capped below the socket timeout so
+    the caller's overall generation budget can actually be met (the request
+    raises, the caller falls back to Gemini / the offline generator instead
+    of the interview start hanging).
+
+    Returns a list of formatted question strings, or None when Ollama is
     unreachable or returned unusable output (caller falls back to Gemini,
     then to the offline resume-grounded generator).
     """
@@ -247,6 +480,11 @@ def generate_interview_questions_ollama(resume_text, difficulty="medium", num_qu
     n_hard = max(1, num_questions - n_easy - n_medium)
 
     resume_context = str(resume_text)[:12000]
+    highlights_digest = build_resume_highlights_digest(resume_context)
+    digest_block = (
+        "RESUME HIGHLIGHTS (verified extract - your questions MUST be built "
+        "from these):\n" + highlights_digest + "\n\n"
+    ) if highlights_digest else ""
     prompt = f"""You are a senior technical interviewer conducting a mock interview.
 
 Candidate's resume:
@@ -254,17 +492,18 @@ Candidate's resume:
 {resume_context}
 ---
 
-Generate exactly {num_questions} personalized interview questions based ONLY on the candidate's actual projects, technical skills, education and experience listed in the resume above.
+{digest_block}Generate exactly {num_questions} personalized interview questions based ONLY on the candidate's actual projects, technical skills, education and experience listed in the resume above.
 
 STRICT RULES:
-1. Use ONLY facts present in the resume. NEVER invent projects, companies, technologies, certifications or experience that are not in the resume.
-2. Every question must reference something concrete from the resume (a named project, a listed technology, a skill, education or experience entry).
+1. DO NOT ask generic or irrelevant questions (e.g. "tell me about yourself", "where do you see yourself in 5 years", strengths/weaknesses, hobbies). Every question must be one that ONLY this candidate could answer well from their resume.
+2. Derive every question STRICTLY from the projects, their architecture, the tools and the tech skills mentioned in the resume. Name the specific project or technology in the question wording (e.g. ask about the candidate's actual named project and its stated tech stack, never about "a project you built" in the abstract).
 3. Required difficulty distribution: {n_easy} EASY questions, {n_medium} MEDIUM questions and {n_hard} HARD question(s).
    - EASY: fundamental concepts of the candidate's listed skills/tools.
    - MEDIUM: practical application, implementation and debugging within their projects.
    - HARD: system design trade-offs, scalability, edge cases and situational judgement applied to their projects.
-4. Each question must be a single, direct question with NO greetings, NO introductions, NO pleasantries and NO commentary.
-5. Vary the topics: cover different projects and different skills - never ask two questions about the same thing.
+4. Use ONLY facts present in the resume. NEVER invent projects, companies, technologies, certifications or experience that are not in the resume. Reuse the EXACT project names and technology names from the resume in the question wording.
+5. Each question must be a single, direct question with NO greetings, NO introductions, NO pleasantries and NO commentary.
+6. Vary the topics: cover different projects and different skills - never ask two questions about the same thing.
 
 Output ONLY a raw JSON object (no markdown, no explanations) with a single key "questions" whose value is a list of exactly {num_questions} objects, each with exactly these keys:
 - "question": the question text (string)
@@ -281,10 +520,20 @@ Output ONLY a raw JSON object (no markdown, no explanations) with a single key "
     }
     try:
         import requests as _requests
+        # Respect the caller's wall-clock budget: the request timeout is the
+        # effective per-call deadline (min of env default and caller budget).
+        effective_timeout = OLLAMA_TIMEOUT_SECONDS
+        if timeout_seconds is not None:
+            try:
+                # Keep a 1s margin below the caller's budget so the client
+                # socket raises (and we fall back) BEFORE the caller gives up.
+                effective_timeout = max(2.0, min(float(timeout_seconds), 600.0) - 1.0)
+            except (TypeError, ValueError):
+                pass
         response = _requests.post(
             f"{OLLAMA_BASE_URL.rstrip('/')}/api/generate",
             json=body,
-            timeout=OLLAMA_TIMEOUT_SECONDS,
+            timeout=effective_timeout,
         )
         response.raise_for_status()
         raw_text = response.json().get("response", "")
@@ -306,7 +555,18 @@ Output ONLY a raw JSON object (no markdown, no explanations) with a single key "
     for q in cleaned:
         final_dist[q["difficulty"]] = final_dist.get(q["difficulty"], 0) + 1
 
-    questions = [_format_question_for_interview(q) for q in cleaned]
+    # Deduplicate, then STRICTLY ground the deck: any question that shares no
+    # vocabulary with the resume is generic or invented and is dropped here.
+    # The caller tops the deck back up from its resume-grounded generator, so
+    # the student only ever sees resume-tailored questions.
+    questions = _dedupe_questions(
+        [_format_question_for_interview(q) for q in cleaned])
+    questions = filter_ungrounded_questions(questions, resume_context)
+
+    if not questions:
+        print("[OLLAMA] No resume-grounded questions survived the filter")
+        return None
+
     print(f"[OLLAMA] Generated {len(questions)} resume-based interview questions "
           f"(model={OLLAMA_MODEL}, easy={final_dist['easy']}/"
           f"medium={final_dist['medium']}/hard={final_dist['hard']})")

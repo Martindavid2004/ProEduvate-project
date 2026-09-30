@@ -8,75 +8,39 @@ from ..services.ai_service import (
     extract_resume_text, get_ai_response,
     generate_interview_questions_ollama, _validate_questions_payload,
     _format_question_for_interview,
+    extract_resume_highlights, filter_ungrounded_questions, _dedupe_questions,
 )
 from ..services.interview_service import evaluate_interview
+from ..services.user_resolution import resolve_user
 
 interview_bp = Blueprint('interview_bp', __name__, url_prefix='/api/interview')
 
-# Skills/technologies recognised by the offline fallback generator. Questions
-# produced here reference ONLY terms actually matched in the resume text.
-_SKILLS_KEYWORDS = [
-    'Java', 'Python', 'JavaScript', 'React', 'Node.js', 'Spring Boot', 'HTML', 'CSS',
-    'SQL', 'MongoDB', 'PostgreSQL', 'MySQL', 'Docker', 'AWS', 'Git', 'REST API',
-    'C++', 'C#', 'TypeScript', 'Flask', 'Django', 'FastAPI', 'Machine Learning',
-    'Data Structures', 'Algorithms', 'Kubernetes', 'Linux', 'GraphQL', 'Redux'
-]
 
-# Project headers like "MedVision AI - FastAPI, React, MongoDB" or
-# "MedVision AI | FastAPI React MongoDB": captures the project name and its
-# tech list so the fallback can ask grounded, project-specific questions.
-_PROJECT_HEADER = re.compile(
-    r'^\s*([A-Z][A-Za-z0-9 .&+]{2,40}?)\s*[\-\u2013\u2014:|]\s*(.+)$')
-
-
-def _extract_resume_highlights(resume_text):
-    """Extract skills and project names/tech-stacks actually present in the resume.
-
-    Returns (found_skills, projects) where projects is a list of
-    (project_name, tech_string). Used ONLY by the offline fallback generator;
-    nothing is invented that is not in the resume text.
-    """
-    found_skills = []
-    projects = []
-    if not resume_text:
-        return found_skills, projects
-
-    for skill in _SKILLS_KEYWORDS:
-        if re.search(r'\b' + re.escape(skill) + r'\b', resume_text, re.IGNORECASE):
-            found_skills.append(skill)
-
-    for line in resume_text.splitlines():
-        line = line.strip()
-        if not line or len(line) > 120:
-            continue
-        m = _PROJECT_HEADER.match(line)
-        if m:
-            name, tech = m.group(1).strip(), m.group(2).strip()
-            # Skip lines that look like section headers rather than projects
-            if not re.search(r'(education|experience|skills|certification|achievement)',
-                             name, re.IGNORECASE):
-                projects.append((name, tech))
-    return found_skills, projects
-
-
-def generate_resume_questions(resume_text, candidate_name="Candidate"):
+def generate_resume_questions(resume_text, candidate_name="Candidate", difficulty="medium"):
     """Offline fallback question generator, grounded ONLY in the resume.
 
     Used when the LLM question generation is unavailable or returns too few
     questions. Every question references skills/projects actually matched in
     the resume text. No greetings/introductions: the interviewer speaks only
     real questions (TTS requirement).
+
+    Difficulty-aware: the deck spans EASY (fundamentals of listed tools),
+    MEDIUM (practical application inside their projects) and HARD (design
+    trade-offs, scalability, edge cases in THEIR system) so the offline deck
+    matches the LLM distribution requirement (Easy 40% / Medium 40% /
+    Hard 20%).
     """
-    found_skills, projects = _extract_resume_highlights(resume_text)
+    found_skills, projects = extract_resume_highlights(resume_text)
 
     primary_skill = found_skills[0] if len(found_skills) > 0 else None
     secondary_skill = found_skills[1] if len(found_skills) > 1 else None
     tertiary_skill = found_skills[2] if len(found_skills) > 2 else None
+    quaternary_skill = found_skills[3] if len(found_skills) > 3 else None
 
     questions = []
 
-    # Project-specific questions first (architecture, contribution,
-    # challenges, decisions, results) - always grounded in a real project.
+    # --- Project-specific anchors (the 'Crime Department' rule): name the
+    # exact project and its tech stack in every question wording.
     for proj_name, tech in projects[:4]:
         questions.append(
             f"I see {proj_name} in your resume"
@@ -99,6 +63,62 @@ def generate_resume_questions(resume_text, candidate_name="Candidate"):
             f"Can you explain how you integrated {tertiary_skill} with the rest of "
             "your application's backend or database layer?")
 
+    # --- EASY fundamentals of the candidate's actual tools ---
+    easy_pool = []
+    for skill in found_skills[:4]:
+        easy_pool.append(
+            f"In your own words, what is {skill} and what problem does it solve? "
+            "Your resume shows you have used it.")
+        easy_pool.append(
+            f"What are the core building blocks of a {skill} application, based "
+            "on how you used it in your projects?")
+    for proj_name, tech in projects[:3]:
+        if tech:
+            easy_pool.append(
+                f"For {proj_name}, why did you choose {tech.split(',')[0].strip()} "
+                "over the alternatives you considered?")
+
+    # --- MEDIUM practical application within THEIR projects ---
+    medium_pool = []
+    for proj_name, tech in projects[:4]:
+        medium_pool.append(
+            f"Walk me through the data flow of {proj_name}"
+            + (f" from its {tech.split(',')[0].strip()} layer" if tech else "")
+            + " to the output the user sees. Where does the main logic live?")
+        medium_pool.append(
+            f"Describe one bug or failure you had to debug in {proj_name} and "
+            "exactly how you located and fixed it.")
+    for skill in found_skills[:4]:
+        medium_pool.append(
+            f"Describe a concrete feature you implemented with {skill} in one of "
+            "your resume projects, including any trade-offs you made.")
+
+    # --- HARD design trade-offs / scalability in THEIR system ---
+    hard_pool = []
+    for proj_name, tech in projects[:3]:
+        hard_pool.append(
+            f"If {proj_name} had to serve 100x its current traffic tomorrow, what "
+            "would break first and how would you redesign it?")
+        hard_pool.append(
+            f"What are the security or data-integrity risks in {proj_name}'s "
+            "current design, and how would you mitigate them?")
+    if primary_skill and projects:
+        hard_pool.append(
+            f"How would you restructure {projects[0][0]} if you had to replace "
+            f"{primary_skill} with a different technology - what would break?")
+
+    # Assemble in a mixed-difficulty order but keep it deterministic: easy ->
+    # medium -> hard with the earlier project-anchored questions first.
+    # difficulty='hard'/'easy' shifts the emphasis without ever removing the
+    # project anchor questions.
+    if difficulty == 'hard':
+        questions = (hard_pool[:3] + questions[:4] + medium_pool[:3]) + questions[4:]
+    elif difficulty == 'easy':
+        questions = (questions[:4] + easy_pool[:4] + medium_pool[:2]) + questions[4:]
+    else:
+        questions = (questions[:4] + medium_pool[:3] + easy_pool[:1]
+                     + hard_pool[:2]) + questions[4:]
+
     # General-but-professional questions to fill remaining slots. These are
     # asked only when resume-specific material has been exhausted (or when no
     # resume is available). The list is long enough to always produce 10
@@ -114,12 +134,16 @@ def generate_resume_questions(resume_text, candidate_name="Candidate"):
         "Tell me about a time you had to learn a new technology quickly. How did you do it?",
         "How do you ensure the quality and maintainability of the code you write?",
         "What motivates you about pursuing a career in software development?",
+        "Which of your projects best demonstrates your problem-solving ability, and why?",
+        "How did you divide responsibilities within your project team?",
     ]
     for q in filler:
-        if len(questions) >= 10:
+        if len(questions) >= 12:
             break
         questions.append(q)
 
+    # Dedupe (the pools can overlap for small resumes) and cap.
+    questions = _dedupe_questions(questions)
     return questions[:10]
 
 def _find_interview_session(session_id, user_id=None):
@@ -152,14 +176,15 @@ def _serialize_interview_session(session):
 
 
 def _resolve_interview_user(user_id):
-    """Resolve the interview candidate strictly from the given user_id.
+    """Resolve the interview candidate from the given user_id.
 
-    Never falls back to a random student: that used to store questions/answers
-    and the final score against the wrong user.
+    Delegates to the shared resolver so registered users (ObjectId), stale
+    e-mail ids and demo logins ('student') all land on the SAME user document
+    the profile dashboard reads. Previously only valid ObjectIds resolved and
+    every other id silently returned None -> the final interviewScore was
+    never written to the user record -> the Profile card showed N/A forever.
     """
-    if user_id and ObjectId.is_valid(user_id):
-        return users_collection.find_one({"_id": ObjectId(user_id)})
-    return None
+    return resolve_user(user_id, users_collection)["user"]
 
 
 @interview_bp.route('/session/<session_id>', methods=['GET'])
@@ -178,7 +203,24 @@ def start_interview():
     Idempotent: passing an existing sessionId resumes that session instead of
     creating a duplicate; refreshing mid-interview continues where the student
     left off. The final evaluation is stored on the session record.
+
+    SYNC GUARANTEE: the whole question pipeline (Ollama -> Gemini -> offline
+    fallback) runs under a hard wall-clock budget. Ollama already has its own
+    socket timeout; without an overall budget the Gemini fallback path could
+    previously hang the start request for MINUTES (4 candidate models x 90 s
+    request timeout each), leaving the popup 'failing to respond'. The
+    deadline is enforced per stage so at least one generation strategy always
+    completes before the budget is exhausted.
     """
+    import time
+    _t0 = time.monotonic()
+    _GEN_BUDGET_SECONDS = 90.0
+
+    def _remaining():
+        return max(0.0, _GEN_BUDGET_SECONDS - (time.monotonic() - _t0))
+
+    def _deadline_passed():
+        return _remaining() <= 0.0
     data = request.get_json() or {}
     user_id = data.get('user_id') or data.get('studentId')
     difficulty = data.get('difficulty', 'medium').lower()
@@ -271,16 +313,34 @@ def start_interview():
 
         # --- PRIMARY: local Ollama LLM (resume-grounded, mixed difficulty) ---
         # The Ollama prompt enforces the required Easy 40% / Medium 40% /
-        # Hard 20% mix, so the difficulty is baked into the deck itself.
-        ollama_questions = generate_interview_questions_ollama(
-            resume_context, difficulty=difficulty, num_questions=10)
+        # Hard 20% mix, carries an explicit resume highlights digest, and a
+        # post-generation grounding filter drops anything not derived from
+        # the resume text (no generic / invented questions reach the deck).
+        # The call only gets the REMAINING generation budget: a slow Ollama
+        # must never consume the whole request wall clock.
+        if _deadline_passed():
+            print("[INTERVIEW] Generation budget exhausted before Ollama call")
+            ollama_questions = None
+        else:
+            ollama_questions = generate_interview_questions_ollama(
+                resume_context, difficulty=difficulty, num_questions=10,
+                timeout_seconds=_remaining())
         if ollama_questions:
-            questions = [q for q in ollama_questions if isinstance(q, str) and q.strip()]
+            # Route-level grounding filter as defense-in-depth: the ai_service
+            # filter runs inside the generator already, but re-filtering here
+            # guarantees NO question that shares no vocabulary with the resume
+            # (generic or invented) can ever enter the deck, regardless of
+            # which code path produced it. Idempotent on grounded questions.
+            questions = filter_ungrounded_questions(
+                [q for q in ollama_questions if isinstance(q, str) and q.strip()],
+                resume_context)
             print(f"[INTERVIEW] Generated {len(questions)} questions via Ollama "
                   f"(model, easy/medium/hard mix)")
 
-        # --- FALLBACK 1: Gemini (same distribution rules) ---
-        if not questions:
+        # --- FALLBACK 1: Gemini (same distribution + grounding rules) ---
+        # Only attempted while the overall budget still allows a meaningful
+        # round trip; otherwise skip straight to the offline generator.
+        if not questions and not _deadline_passed():
             prompt = f"""
         You are an AI interviewer. Generate the next interview question using ONLY information supported by the candidate's resume and the current interview context.
 
@@ -311,12 +371,17 @@ def start_interview():
             if ai_response and "questions" in ai_response:
                 questions = [q for q in ai_response.get("questions", [])
                              if isinstance(q, str) and q.strip()]
-                print(f"[INTERVIEW] Generated {len(questions)} questions from resume (Gemini)")
+                # Same STRICT grounding as the Ollama path: drop questions
+                # that share no vocabulary with the resume text.
+                questions = filter_ungrounded_questions(questions, resume_context)
+                print(f"[INTERVIEW] Generated {len(questions)} grounded questions "
+                      f"from resume (Gemini)")
 
         # --- FALLBACK 2: offline resume-grounded generator ---
         if not questions:
             print("[INTERVIEW] AI question generation failed - using resume-grounded fallback")
-            questions = generate_resume_questions(resume_text, candidate_name)
+            questions = generate_resume_questions(resume_text, candidate_name,
+                                                  difficulty=difficulty)
     else:
         prompt = f"""
         You are an AI interviewer. No resume is available for this candidate.
@@ -337,9 +402,20 @@ def start_interview():
             questions = [q for q in ai_response.get("questions", [])
                          if isinstance(q, str) and q.strip()]
 
+    # Top up from the resume-grounded generator when the LLM deck came back
+    # short (LLM questions dropped by the grounding filter, Ollama down,
+    # etc.). Top-up questions are deduped against what is already in the
+    # deck so the student never sees the same question twice.
     if len(questions) < 10:
         resume_questions = generate_resume_questions(resume_text, candidate_name)
-        questions.extend(resume_questions[len(questions):10])
+        existing_keys = {re.sub(r'[^a-z0-9]', '', str(q).lower()) for q in questions}
+        for q in resume_questions:
+            if len(questions) >= 10:
+                break
+            key = re.sub(r'[^a-z0-9]', '', str(q).lower())
+            if key and key not in existing_keys:
+                questions.append(q)
+                existing_keys.add(key)
     questions = questions[:10]
 
     # Persist the session so refreshes resume it and results have a home.
@@ -536,7 +612,37 @@ def evaluate_answers():
     if session:
         if session.get("status") == "completed":
             # Idempotent re-finalize: return the stored result, never re-score.
+            # SELF-HEAL: older evaluations could leave the session completed
+            # while the user's interviewScore was never written (unresolvable
+            # id at the time). Re-attempt the user update here so a page
+            # refresh/reclick can never strand the score in "N/A" limbo.
             stored = session.get("result") or result
+            if user_id and (session.get("score") is not None) \
+                    and (session.get("score_user_synced") is not True):
+                resolved = resolve_user(user_id, users_collection)
+                u = resolved["user"]
+                if u is not None:
+                    s = session.get("score")
+                    try:
+                        s = round(float(s), 2)
+                        if s == int(s):
+                            s = int(s)
+                    except (TypeError, ValueError):
+                        s = session.get("score")
+                    session_result = session.get("result")
+                    healed_status = (session.get("interview_status")
+                                     or ("PASS" if isinstance(session_result, dict)
+                                         and session_result.get("passed") else "FAIL"))
+                    users_collection.update_one(
+                        {"_id": u["_id"]},
+                        {"$set": {"interviewScore": s,
+                                  "interviewStatus": healed_status}}
+                    )
+                    submissions_collection.update_one(
+                        {"_id": session["_id"]},
+                        {"$set": {"score_user_synced": True}})
+                    print(f"[INTERVIEW] Self-healed user score sync "
+                          f"(user_key={u['_id']}, score={s})")
             response = dict(stored)
             response["sessionId"] = str(session["_id"])
             response["session"] = _serialize_interview_session(session)
@@ -553,18 +659,35 @@ def evaluate_answers():
         )
         print(f"[INTERVIEW] Result saved: success (session={session_id})")
 
-    # Update the student's stored score only for a matched, valid user.
-    if user_id and ObjectId.is_valid(user_id):
-        update_res = users_collection.update_one(
-            {"_id": ObjectId(user_id)},
-            {"$set": {
-                "interviewScore": interview_score,
-                "interviewStatus": interview_status,
-            }}
-        )
+    # Update the student's stored score for the RESOLVED user (registered,
+    # stale-email or demo identity - see user_resolution.resolve_user). A
+    # non-ObjectId id must never silently skip the score write: that was the
+    # root cause of the profile card permanently showing N/A.
+    user_updated = False
+    if user_id:
+        resolved = resolve_user(user_id, users_collection)
+        user_doc = resolved["user"]
+        if user_doc is not None:
+            users_collection.update_one(
+                {"_id": user_doc["_id"]},
+                {"$set": {
+                    "interviewScore": interview_score,
+                    "interviewStatus": interview_status,
+                }}
+            )
+            user_updated = True
+            if session:
+                submissions_collection.update_one(
+                    {"_id": session["_id"]},
+                    {"$set": {"score_user_synced": True}})
         print(f"[INTERVIEW] Result saved: "
-              f"{'success' if update_res.modified_count else 'user_not_found'} "
-              f"(user_id={user_id})")
+              f"{'success' if user_updated else 'user_not_found'} "
+              f"(user_id={user_id}, resolved_via={resolved['resolved_via']}, "
+              f"user_key={user_doc['_id'] if user_doc else None})")
+    if session:
+        submissions_collection.update_one(
+            {"_id": session["_id"]},
+            {"$set": {"score_user_synced": user_updated}})
 
     response = dict(result)
     if session:

@@ -39,6 +39,7 @@ def create_app():
     from .routes.auth_routes import auth_bp
     from .routes.aptitude_routes import aptitude_bp
     from .routes.gd_routes import gd_bp
+    from .routes.skill_routes import skill_bp
 
     app.register_blueprint(admin_bp)
     app.register_blueprint(teacher_bp)
@@ -49,6 +50,16 @@ def create_app():
     app.register_blueprint(auth_bp)
     app.register_blueprint(aptitude_bp)
     app.register_blueprint(gd_bp)
+    app.register_blueprint(skill_bp)
+
+    # Skill Card System duplicate-prevention indexes (idempotent). The
+    # service layer also guards every award, so a skipped index never
+    # breaks the feature.
+    from .database import ensure_skill_indexes
+    try:
+        ensure_skill_indexes()
+    except Exception as e:
+        print(f"Warning: could not create skill indexes: {e}")
 
     # Unique per-attempt indexes: make assessment start race-proof so a
     # double start / two tabs / refresh can never create two attempts for

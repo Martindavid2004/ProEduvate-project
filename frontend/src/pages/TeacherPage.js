@@ -4,6 +4,8 @@ import { useData } from '../context/DataContext';
 import { teacherAPI, chatbotAPI, BACKEND_URL } from '../services/api';
 import { FileText, Users, CheckSquare, Upload, Eye, Menu, Bell } from 'lucide-react';
 import Modal from '../components/Modal';
+import SkillProgressPanel from '../components/SkillProgressPanel';
+import { Trophy } from 'lucide-react';
 
 const TeacherPage = () => {
   const [activeTab, setActiveTab] = useState('assignment');
@@ -170,6 +172,7 @@ const TeacherPage = () => {
     { id: 'mycreated', label: 'My Assignments', icon: <FileText size={20} /> },
     { id: 'students', label: 'Student Progress', icon: <Users size={20} /> },
     { id: 'submissions', label: 'Submissions', icon: <Upload size={20} /> },
+    { id: 'skills', label: 'Skill Progress', icon: <Trophy size={20} /> },
   ];
 
   const students = users.filter(u => u.role === 'student');
@@ -491,6 +494,9 @@ const TeacherPage = () => {
             )}
 
             {/* Submissions Tab */}
+            {activeTab === 'skills' && (
+              <SkillProgressPanel />
+            )}
             {activeTab === 'submissions' && (
               <div className="fade-in">
                 <h2 className="text-3xl font-bold mb-6 text-gray-800">Student Submissions</h2>

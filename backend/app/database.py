@@ -98,3 +98,59 @@ gd_notifications_collection = db.gd_notifications
 aptitude_concepts_collection = db.aptitude_concepts
 aptitude_practice_collection = db.aptitude_practice
 aptitude_test_questions_collection = db.aptitude_test_questions
+
+# ---------------------------------------------------------------------------
+# Placement Training Skill Card System collections
+# NOTE: MongoDB is a demo-modeDummyDB fallback-safe: every guarantee below is
+# also enforced transactionally in the service layer, so the feature still
+# behaves correctly if index creation is skipped.
+# ---------------------------------------------------------------------------
+skill_topics_collection = db.skill_topics
+skill_topic_assignments_collection = db.skill_topic_assignments
+skill_lessons_collection = db.skill_lessons
+skill_lesson_progress_collection = db.skill_lesson_progress
+skill_problems_collection = db.skill_problems
+skill_submissions_collection = db.skill_submissions
+skill_assessments_collection = db.skill_assessments
+skill_assessment_attempts_collection = db.skill_assessment_attempts
+skill_xp_transactions_collection = db.skill_xp_transactions
+skill_badge_rules_collection = db.skill_badge_rules
+skill_badge_awards_collection = db.skill_badge_awards
+skill_activity_history_collection = db.skill_activity_history
+skill_settings_collection = db.skill_settings
+skill_audit_log_collection = db.skill_audit_log
+
+
+def ensure_skill_indexes():
+    """Idempotent indexes enforcing the duplicate-prevention guarantees.
+
+    - One solved-count credit per (student, problem).
+    - One lesson completion per (student, lesson).
+    - One XP award per dedup key: double-clicks and concurrent request
+      races can never create duplicate completion rewards.
+    - One progress badge award per (student, topic, badge).
+    """
+    from pymongo import ASCENDING
+
+    skill_lesson_progress_collection.create_index(
+        [("student_id", ASCENDING), ("lesson_id", ASCENDING)],
+        name="uniq_student_lesson", unique=True)
+    skill_submissions_collection.create_index(
+        [("student_id", ASCENDING), ("problem_id", ASCENDING), ("solved_credit", ASCENDING)],
+        name="uniq_student_problem", unique=True,
+        partialFilterExpression={"solved_credit": True})
+    skill_xp_transactions_collection.create_index(
+        [("award_key", ASCENDING)], name="uniq_award_key", unique=True)
+    skill_badge_awards_collection.create_index(
+        [("student_id", ASCENDING), ("topic_id", ASCENDING), ("badge_key", ASCENDING)],
+        name="uniq_student_topic_badge", unique=True)
+    skill_assessment_attempts_collection.create_index(
+        [("student_id", ASCENDING), ("assessment_id", ASCENDING), ("attempt_no", ASCENDING)],
+        name="uniq_student_attempt", unique=True)
+    skill_topic_assignments_collection.create_index(
+        [("topic_id", ASCENDING), ("student_id", ASCENDING)],
+        name="uniq_topic_student", unique=True, sparse=True)
+    skill_activity_history_collection.create_index(
+        [("student_id", ASCENDING), ("at", ASCENDING)], name="student_activity_time")
+    skill_submissions_collection.create_index(
+        [("problem_id", ASCENDING), ("at", ASCENDING)], name="problem_submissions_time")

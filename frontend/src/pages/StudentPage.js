@@ -5,6 +5,7 @@ import Modal from '../components/Modal';
 import CodingInterface from '../components/CodingInterface';
 import AptitudeTraining from '../components/AptitudeTraining';
 import GDRound from '../components/GDRound';
+import SkillCardDashboard from '../components/SkillCardDashboard';
 import { useData } from '../context/DataContext';
 import { studentAPI, interviewAPI, chatbotAPI, gdAPI, assessmentAPI, API_URL } from '../services/api';
 import { FileText, Briefcase, Upload, MessageSquare, Trophy, User, Code, Database, Globe, BarChart3, Network, Cloud, MessageCircle, Users, Users2, Brain, Clock, Target, CheckCircle, Award, ArrowLeft, ClipboardList, Mic, Check, X, Menu, Settings, Lock, AlertCircle, UserCircle, Bell, Info, Save, Edit2 } from 'lucide-react';
@@ -1594,6 +1595,7 @@ const StudentPage = () => {
     { id: 'interview', label: 'AI Interview', icon: <Briefcase size={20} /> },
     { id: 'assignments', label: 'My Assignments', icon: <FileText size={20} /> },
     { id: 'training', label: 'Placement Training', icon: <Trophy size={20} /> },
+    { id: 'ai-training', label: 'AI Skill Training', icon: <Brain size={20} /> },
     { id: 'settings', label: 'Settings', icon: <Settings size={20} /> },
   ];
 
@@ -2106,6 +2108,19 @@ const StudentPage = () => {
             {activeTab === 'training' && (
               <div className="fade-in">
                 <h2 className="text-3xl font-bold mb-6 text-gray-800">Placement Training</h2>
+
+                {/* SkillRack-style topic-wise skill cards: XP, badges and
+                    progress are persisted server-side and computed on the API. */}
+                <div className="mb-10">
+                  <SkillCardDashboard currentStudent={currentStudent} />
+                </div>
+              </div>
+            )}
+
+            {/* AI Training Paths (kept as a second training tab) */}
+            {activeTab === 'ai-training' && (
+              <div className="fade-in">
+                <h2 className="text-3xl font-bold mb-6 text-gray-800">AI Skill Training</h2>
                 
                 {!trainingType ? (
                   <div>

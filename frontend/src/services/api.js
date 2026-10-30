@@ -77,6 +77,26 @@ export const adminAPI = {
   deleteTask: (taskId) => api.delete(`/admin/tasks/${taskId}`),
 };
 
+// Skill Card System (Placement Training) API calls.
+// All progress/reward values are SERVER-computed; the client only posts raw
+// actions (complete lesson, submit code, submit answers) and renders results.
+export const skillAPI = {
+  dashboard: () => api.get('/skills/me/dashboard'),
+  topicDetail: (topicId) => api.get(`/skills/topics/${topicId}`),
+  completeLesson: (lessonId) => api.post(`/skills/lessons/${lessonId}/complete`),
+  submitProblem: (problemId, code) =>
+    api.post(`/skills/problems/${problemId}/submit`, { code }),
+  getAssessment: (assessmentId) => api.get(`/skills/assessments/${assessmentId}`),
+  submitAssessment: (assessmentId, answers) =>
+    api.post(`/skills/assessments/${assessmentId}/submit`, { answers }),
+  teacherProgress: (params) => api.get('/skills/teacher/progress', { params }),
+  teacherExportUrl: () => `${API_URL}/skills/teacher/export`,
+  adminConfig: () => api.get('/skills/admin/config'),
+  updateXpConfig: (xp) => api.put('/skills/admin/config/xp', xp),
+  updateBadgeRules: (badges) => api.put('/skills/admin/badges', badges),
+  auditLog: () => api.get('/skills/admin/audit'),
+};
+
 // Teacher API calls
 export const teacherAPI = {
   getAssignments: () => api.get('/teacher/assignments'),
